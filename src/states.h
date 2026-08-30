@@ -26,6 +26,7 @@ struct tab_state {
     char* exec_cmd;
     uint8_t filters;
     int8_t sort;
+    size_t selected;
     struct display_cfg display;
     struct servlist* list;
 

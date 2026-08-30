@@ -20,7 +20,6 @@
 #include "cmd.h"
 #include "common.h"
 #include "serv.h"
-#include "servfetch.h"
 #include "states.h"
 
 #define SUCC_PAIR 1
@@ -205,11 +204,8 @@ int main(void) {
     draw_frame(sortwin, tab->display, 0);
 
     char buf[64] = {0};
-    // pid_t child = -1;
-    char ip[16];
     bool filtering = false;
     int8_t curr_sort = FIELD_NAME;
-    size_t selected = 0;
     while (state.quit == false) {
         int ch = getch();
         tab = state.tabs + state.tabs_selected;
@@ -222,13 +218,13 @@ int main(void) {
             handle_cmd(buf, &state);
             sort_serverlist(tab->list, tab->sort, tab->filters,
                             tab->search_buf);
-            draw_serverlist(status, tab->list, tab->display, selected);
+            draw_serverlist(status, tab->list, tab->display, tab->selected);
             wrefresh(status);
         } else if (tab->list == NULL) {
         } else if (ch == KEY_UP || ch == 'k') {
-            if (selected > 0) selected--;
+            if (tab->selected > 0) tab->selected--;
         } else if (ch == KEY_DOWN || ch == 'j') {
-            if (selected < tab->list->num_displayed - 1) selected++;
+            if (tab->selected < tab->list->num_displayed - 1) tab->selected++;
         } else if (ch == KEY_LEFT || ch == 'h') {
             if ((curr_sort & 0x1) == 0) curr_sort >>= 1;
         } else if (ch == KEY_RIGHT || ch == 'l') {
@@ -242,22 +238,19 @@ int main(void) {
                 sort_serverlist(tab->list, tab->sort, tab->filters,
                                 tab->search_buf);
             } else {
-                inet_ntop(AF_INET, &tab->list->servs[selected].ip, ip, 15);
-                sprintf(buf, "connect %s %" PRIu16, ip,
-                        ntohs(tab->list->servs[selected].port));
-                handle_cmd(buf, &state);
+                handle_cmd("connect", &state);
             }
         } else if (ch == '/') {
             getinput("Enter search request: ", buf, 63);
             sort_serverlist(tab->list, tab->sort, tab->filters, buf);
-            if (tab->list->num_displayed < selected)
-                selected = tab->list->num_displayed - 1;
+            if (tab->list->num_displayed < tab->selected)
+                tab->selected = tab->list->num_displayed - 1;
         } else if (ch == '\t') {
             filtering = !filtering;
         }
 
         draw_frame(sortwin, tab->display, filtering ? curr_sort : 0);
-        draw_serverlist(status, tab->list, tab->display, selected);
+        draw_serverlist(status, tab->list, tab->display, tab->selected);
     }
 
     for (size_t i = 0; i < state.tabs_count; i++) free_tab(state.tabs + i);

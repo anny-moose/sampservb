@@ -57,12 +57,21 @@ static void call_connect(const char** argv, void* cfg_) {
     const char* generic_err =
         "Address wasn't specified properly! Expected :connect <addr> <port>";
 
-    if (argv[1] == NULL) {
-        notify(generic_err);
-        return;
-    }
+    char ip[INET_ADDRSTRLEN];
+    int portx;
 
-    char ip[16];
+    if (argv[1] == NULL) {
+        if (tab->list == NULL || tab->selected >= tab->list->num_displayed) {
+            notify(generic_err);
+            return;
+        }
+
+        const struct servinfo* serv = tab->list->servs + tab->selected;
+
+        inet_ntop(AF_INET, &serv->ip, ip, INET_ADDRSTRLEN);
+        portx = ntohs(serv->port);
+        goto launch;
+    }
 
     const struct addrinfo hints = {
         .ai_family = AF_INET,
@@ -85,7 +94,6 @@ static void call_connect(const char** argv, void* cfg_) {
     freeaddrinfo(resp);
     inet_ntop(AF_INET, &addr.sin_addr, ip, 15);
 
-    int portx;
     if (argv[2] == NULL) {
         portx = 7777;
     } else {
@@ -96,6 +104,7 @@ static void call_connect(const char** argv, void* cfg_) {
         }
     }
 
+launch:
     child_spawned = 1;
     pid_t child = fork();
     if (child == 0) {
