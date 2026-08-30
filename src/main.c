@@ -85,6 +85,11 @@ int draw_frame(WINDOW* win, struct display_cfg cfg, int8_t field) {
 
 int draw_serverlist(WINDOW* win, const struct servlist* servers,
                     struct display_cfg cfg, size_t selected) {
+    if (win == NULL) return -1;
+    if (servers == NULL) {
+        wclear(win);
+        return -1;
+    }
     static size_t beginning = 0;
     if (beginning > selected) beginning = selected;
 
@@ -195,17 +200,7 @@ int main(void) {
     init_tab(state.tabs);
     struct tab_state* tab = state.tabs + state.tabs_selected;
 
-    struct servlist* list = fetch_servers("https://api.open.mp/servers");
-    if (list == NULL) {
-        notify("Unable to fetch servers");
-        getch();
-        return EXIT_FAILURE;
-    }
-
-    tab->list = list;
-
-    sort_serverlist(list, tab->sort, 0, NULL);
-    draw_serverlist(status, list, tab->display, 0);
+    draw_serverlist(status, tab->list, tab->display, 0);
     wrefresh(status);
     draw_frame(sortwin, tab->display, 0);
 
@@ -219,10 +214,21 @@ int main(void) {
         int ch = getch();
         tab = state.tabs + state.tabs_selected;
 
-        if (ch == KEY_UP || ch == 'k') {
+        /* TODO: this is messy. i was thinking, maybe every hotkey (besides ':')
+         * should just be a cmd call, i.e k would just quietly call :Up, or
+         * something like that. */
+        if (ch == ':') {
+            getinput(":", buf, 63);
+            handle_cmd(buf, &state);
+            sort_serverlist(tab->list, tab->sort, tab->filters,
+                            tab->search_buf);
+            draw_serverlist(status, tab->list, tab->display, selected);
+            wrefresh(status);
+        } else if (tab->list == NULL) {
+        } else if (ch == KEY_UP || ch == 'k') {
             if (selected > 0) selected--;
         } else if (ch == KEY_DOWN || ch == 'j') {
-            if (selected < list->num_displayed - 1) selected++;
+            if (selected < tab->list->num_displayed - 1) selected++;
         } else if (ch == KEY_LEFT || ch == 'h') {
             if ((curr_sort & 0x1) == 0) curr_sort >>= 1;
         } else if (ch == KEY_RIGHT || ch == 'l') {
@@ -233,30 +239,25 @@ int main(void) {
                     tab->sort |= (int8_t)INT8_MIN;
                 else
                     tab->sort = curr_sort;
-                sort_serverlist(list, tab->sort, tab->filters, tab->search_buf);
+                sort_serverlist(tab->list, tab->sort, tab->filters,
+                                tab->search_buf);
             } else {
-                inet_ntop(AF_INET, &list->servs[selected].ip, ip, 15);
+                inet_ntop(AF_INET, &tab->list->servs[selected].ip, ip, 15);
                 sprintf(buf, "connect %s %" PRIu16, ip,
-                        ntohs(list->servs[selected].port));
+                        ntohs(tab->list->servs[selected].port));
                 handle_cmd(buf, &state);
             }
         } else if (ch == '/') {
             getinput("Enter search request: ", buf, 63);
-            sort_serverlist(list, tab->sort, tab->filters, buf);
-            if (list->num_displayed < selected)
-                selected = list->num_displayed - 1;
-        } else if (ch == ':') {
-            getinput(":", buf, 63);
-            handle_cmd(buf, &state);
-            sort_serverlist(list, tab->sort, tab->filters, tab->search_buf);
-            draw_serverlist(status, list, tab->display, selected);
-            wrefresh(status);
+            sort_serverlist(tab->list, tab->sort, tab->filters, buf);
+            if (tab->list->num_displayed < selected)
+                selected = tab->list->num_displayed - 1;
         } else if (ch == '\t') {
             filtering = !filtering;
         }
 
         draw_frame(sortwin, tab->display, filtering ? curr_sort : 0);
-        draw_serverlist(status, list, tab->display, selected);
+        draw_serverlist(status, tab->list, tab->display, selected);
     }
 
     for (size_t i = 0; i < state.tabs_count; i++) free_tab(state.tabs + i);

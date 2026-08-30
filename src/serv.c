@@ -56,6 +56,7 @@ static int servcmp(const void* s1_, const void* s2_) {
 
 int sort_serverlist(struct servlist* servers, int8_t sort_field,
                     uint8_t filters, char* query) {
+    if (servers == NULL) return -1;
     servers->num_displayed = servers->len;
     for (size_t i = 0; i < servers->num_displayed;) {
         const char* txt = servers->servs[i].txt != NULL ? servers->servs[i].txt
@@ -84,6 +85,8 @@ int sort_serverlist(struct servlist* servers, int8_t sort_field,
 }
 
 void servlist_free(struct servlist* servs) {
+    if (servs == NULL) return;
+
     if (servs->txt == NULL) {
         for (size_t i = 0; i < servs->len; i++) {
             free(servs->servs[i].txt);

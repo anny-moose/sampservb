@@ -24,6 +24,7 @@ struct servinfo {
 
 struct servlist {
     size_t len;
+    size_t cap;
     size_t num_displayed; /* when filtering, all servers that should be hidden
                              should be after num_displayed */
     char* txt;

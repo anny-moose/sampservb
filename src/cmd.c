@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "common.h"
+#include "servfetch.h"
 
 extern char** environ;
 
@@ -317,8 +318,28 @@ static void call_source(const char** argv, void* cfg_) {
     free(cmd);
 }
 
+static void call_fetch(const char** argv, void* cfg_) {
+    struct tab_state* cfg = cfg_;
+
+    const char* remote = "https://api.open.mp/servers";
+    if (argv[1] == NULL) {
+        notify("No api url provided! Assuming \"%s\"", remote);
+    } else {
+        remote = argv[1];
+    }
+
+    struct servlist* new_list = fetch_servers(remote);
+    if (new_list == NULL) {
+        notify("Failed to fetch server list.");
+        return;
+    }
+
+    servlist_free(cfg->list);
+    cfg->list = new_list;
+}
+
 #define LVL_APPLICATION 1
-#define LVL_WINDOW 0
+#define LVL_TAB 0
 
 static const struct regcmd {
     const char* cmd;
@@ -356,6 +377,11 @@ static const struct regcmd {
         .call = call_source,
         .expected_args = 2,
         .lvl = LVL_APPLICATION,
+    },
+    {
+        .cmd = "fetch",
+        .call = call_fetch,
+        .expected_args = 2,
     },
 };
 
@@ -399,7 +425,7 @@ void handle_cmd(char* cmd, struct app_state* cfg) {
 
             void* arg;
             switch (commands[i].lvl) {
-                case LVL_WINDOW:
+                case LVL_TAB:
                     arg = cfg->tabs + cfg->tabs_selected;
                     break;
                 case LVL_APPLICATION:

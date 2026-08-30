@@ -123,6 +123,7 @@ static int parse_servers(const char* json, struct servlist** out) {
         warn("Malloc of %zu bytes failed", alloc_size);
         goto end;
     }
+    list->cap = arr_size;
 
     size_t server_count = 0;
     char* textbuf = malloc(BUF_SIZE);
@@ -238,6 +239,7 @@ static char* get_resp(const char* url) {
     resp = curl_easy_perform(curl);
     if (resp != CURLE_OK) {
         warnx("Failed to retrieve %s: %s\n", url, curl_easy_strerror(resp));
+        curl_easy_cleanup(curl);
         return NULL;
     }
 
@@ -249,9 +251,11 @@ static char* get_resp(const char* url) {
 struct servlist* fetch_servers(const char* url) {
     struct servlist* list;
     char* raw = get_resp(url);
-    if (raw == NULL) errx(EXIT_FAILURE, "failed getting json");
-    if (parse_servers(raw, &list) < 0)
-        errx(EXIT_FAILURE, "failed to get servers!");
+    if (raw == NULL) return NULL;
+    if (parse_servers(raw, &list) < 0) {
+        free(raw);
+        return NULL;
+    }
 
     free(raw);
     return list;
