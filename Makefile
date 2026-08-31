@@ -10,7 +10,7 @@ build/out: build/main.o build/cmd.o build/common.o build/serv.o build/servfetch.
 build/main.o: src/main.c src/cmd.h src/common.h src/serv.h src/servfetch.h src/states.h
 	${CC} ${CFLAGS} $< -c -o $@
 	
-build/cmd.o: src/cmd.c src/cmd.h src/common.h
+build/cmd.o: src/cmd.c src/cmd.h src/common.h src/serv.h
 	${CC} ${CFLAGS} $< -c -o $@
 
 build/common.o: src/common.c src/common.h

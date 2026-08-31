@@ -20,6 +20,7 @@
 #include "cmd.h"
 #include "common.h"
 #include "serv.h"
+#include "servfetch.h"
 #include "states.h"
 
 #define SUCC_PAIR 1
@@ -108,8 +109,8 @@ int draw_serverlist(WINDOW* win, const struct servlist* servers,
         size_t i = beginning + y;
         if (i >= servers->num_displayed) continue;
 
-        const char* txt =
-            servers->txt != NULL ? servers->txt : servers->servs[i].txt;
+        const char* txt = servers->servs[i].txt == NULL ? servers->txt
+                                                        : servers->servs[i].txt;
 
         int ok = OK;
         if (cfg.shown_fields & FIELD_PR && ok != ERR) {
@@ -163,11 +164,15 @@ void sigchld_handler(int sig) {
 }
 
 int main(void) {
-    struct sigaction handle_child = {0};
-    handle_child.sa_flags = SA_RESTART;
-    handle_child.sa_handler = sigchld_handler;
+    struct sigaction handle_child = {
+        .sa_flags = SA_RESTART,
+        .sa_handler = sigchld_handler,
+    };
     if (sigaction(SIGCHLD, &handle_child, NULL) < 0)
         err(EXIT_FAILURE, "Failed to set signal handler for SIGCHLD");
+    handle_child.sa_flags = 0;
+    if (sigaction(SIGALRM, &handle_child, NULL) < 0)
+        err(EXIT_FAILURE, "Failed to set signal handler for SIGALRM");
 
     setlocale(LC_ALL, "");
     initscr();
@@ -187,6 +192,8 @@ int main(void) {
 
     WINDOW* status = newwin(LINES - 1 - 2, COLS, 1, 0);
     WINDOW* sortwin = newwin(1, COLS, 0, 0);
+
+    servquery_init();
 
     struct tab_state t;
     struct app_state state = {
@@ -241,8 +248,9 @@ int main(void) {
                 handle_cmd("connect", &state);
             }
         } else if (ch == '/') {
-            getinput("Enter search request: ", buf, 63);
-            sort_serverlist(tab->list, tab->sort, tab->filters, buf);
+            getinput("Enter search request: ", tab->search_buf, 63);
+            sort_serverlist(tab->list, tab->sort, tab->filters,
+                            tab->search_buf);
             if (tab->list->num_displayed < tab->selected)
                 tab->selected = tab->list->num_displayed - 1;
         } else if (ch == '\t') {
@@ -252,6 +260,8 @@ int main(void) {
         draw_frame(sortwin, tab->display, filtering ? curr_sort : 0);
         draw_serverlist(status, tab->list, tab->display, tab->selected);
     }
+
+    servquery_destroy();
 
     for (size_t i = 0; i < state.tabs_count; i++) free_tab(state.tabs + i);
 

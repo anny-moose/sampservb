@@ -18,7 +18,6 @@ struct servinfo {
     size_t hn_off;
     size_t gm_off;
     size_t ln_off;
-    size_t vn_off;
     char* txt;
 };
 
@@ -34,6 +33,7 @@ struct servlist {
 int servlist_hide(struct servlist* servers, size_t idx);
 int sort_serverlist(struct servlist* servers, int8_t sort_field,
                     uint8_t filters, char* query);
+int servlist_resize(struct servlist** servers, size_t new_cap);
 void servlist_free(struct servlist* servs);
 
 #endif

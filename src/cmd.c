@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "common.h"
+#include "serv.h"
 #include "servfetch.h"
 
 extern char** environ;
@@ -347,6 +348,67 @@ static void call_fetch(const char** argv, void* cfg_) {
     cfg->list = new_list;
 }
 
+static void call_add(const char** argv, void* cfg_) {
+    struct tab_state* tab = cfg_;
+
+    const char* generic_err =
+        "Address wasn't specified properly! Expected :add <addr> <port>";
+
+    if (argv[1] == NULL) {
+        notify(generic_err);
+        return;
+    }
+
+    const struct addrinfo hints = {
+        .ai_family = AF_INET,
+        .ai_protocol = SOCK_DGRAM,
+    };
+
+    struct addrinfo* resp;
+
+    int ret = getaddrinfo(argv[1], NULL, &hints, &resp);
+    if (ret != 0) {
+        notify("Failed to resolve address: %s", gai_strerror(ret));
+        return;
+    }
+    if (resp->ai_addr->sa_family != AF_INET) {
+        notify("Failed to resolve address");
+        freeaddrinfo(resp);
+        return;
+    }
+    struct sockaddr_in addr = *(struct sockaddr_in*)(resp->ai_addr);
+    freeaddrinfo(resp);
+
+    int portx;
+    if (argv[2] == NULL) {
+        portx = 7777;
+    } else {
+        portx = atoi(argv[2]);
+        if (portx > UINT16_MAX || portx < 0) {
+            notify("Port falls outside of the valid range");
+            return;
+        }
+    }
+
+    addr.sin_port = htons((uint16_t)portx);
+
+    // clang-format off
+    if (tab->list == NULL || tab->list->len >= tab->list->cap)
+        if (servlist_resize(&tab->list, 
+                tab->list != NULL ? tab->list->cap + tab->list->cap / 2 : 2) < 0) {
+            notify("Failed to allocate");
+            return;
+        }
+    // clang-format on
+
+    ret = servquery_info(addr, tab->list->servs + tab->list->len);
+    if (ret < 0) {
+        notify("Failed to query server: %d", ret);
+        return;
+    }
+    tab->list->len++;
+}
+
 #define LVL_APPLICATION 1
 #define LVL_TAB 0
 
@@ -391,6 +453,11 @@ static const struct regcmd {
         .cmd = "fetch",
         .call = call_fetch,
         .expected_args = 2,
+    },
+    {
+        .cmd = "add",
+        .call = call_add,
+        .expected_args = 3,
     },
 };
 

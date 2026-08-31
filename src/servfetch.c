@@ -7,9 +7,11 @@
 #include <curl/curl.h>
 #include <curl/easy.h>
 #include <err.h>
+#include <errno.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "serv.h"
 
@@ -54,8 +56,7 @@ enum dispatcher {
     X(pa, pa, bool, DISPATCH_BOOL)          \
     X(hn, hn_off, size_t, DISPATCH_STR)     \
     X(gm, gm_off, size_t, DISPATCH_STR)     \
-    X(la, ln_off, size_t, DISPATCH_STR)     \
-    X(vn, vn_off, size_t, DISPATCH_STR)
+    X(la, ln_off, size_t, DISPATCH_STR)
 
 #define ASSERT_INT(key, entry, fail_label)        \
     do {                                          \
@@ -205,7 +206,6 @@ static int parse_servers(const char* json, struct servlist** out) {
         strcpy(textbuf + hn_off_local, hn->valuestring);
         strcpy(textbuf + gm_off_local, gm->valuestring);
         strcpy(textbuf + ln_off_local, la->valuestring);
-        strcpy(textbuf + vn_off_local, vn->valuestring);
         server_count++;
     }
 
@@ -259,4 +259,126 @@ struct servlist* fetch_servers(const char* url) {
 
     free(raw);
     return list;
+}
+
+static int sockfd;
+int servquery_init(void) {
+    if (sockfd != 0) {
+        return 1;
+    }
+
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return -1;
+
+    sockfd = fd;
+    return 0;
+}
+
+#define DGRAM_MAX 65535
+#define QUERY_LEN 11
+int servquery_info(struct sockaddr_in serv, struct servinfo* out) {
+    if (sockfd == 0) return -1;
+
+    unsigned char resp[DGRAM_MAX];
+    unsigned char req[QUERY_LEN];
+
+    /* https://open.mp/docs/tutorials/QueryMechanism#serialized-data */
+    memcpy(req, "SAMP", 4);
+    memcpy(req + 4, &serv.sin_addr, 4);
+    memcpy(req + 8, &serv.sin_port, 2);
+    /* both the commented out version and the one above seemingly WORK(???) The
+     * wiki says you should do the one on the bottom but it's bogus because it
+     * results in different packets on different architectures... I'm going to
+     * ASSUME that you're expected to put the port in network order, because
+     * that _makes sense_ */
+    /*
+    req[8] = serv.sin_port & 0xFF;
+    req[9] = serv.sin_port >> 8;
+    */
+
+    req[10] = 'i';
+
+    alarm(5);
+    if (sendto(sockfd, req, QUERY_LEN, 0, (struct sockaddr*)&serv,
+               sizeof(serv)) < 0)
+        return errno == EINTR ? -2 : -1;
+    alarm(0);
+
+    alarm(5);
+    ssize_t ret;
+    if ((ret = recvfrom(sockfd, resp, DGRAM_MAX, 0, NULL, NULL)) < 0)
+        return errno == EINTR ? -3 : -1;
+    alarm(0);
+
+    /* https://open.mp/docs/tutorials/QueryMechanism#response */
+    size_t exp =
+        QUERY_LEN + 17; /* all non-variable-length fields sum up to 17. */
+
+    /* safe cast because ret can't be < 0 */
+    if ((size_t)ret < exp) return -1;
+
+    if (memcmp(resp, req, QUERY_LEN) != 0) return -1;
+
+    unsigned char* curs = resp + QUERY_LEN;
+    struct servinfo info = {0};
+    memcpy(&info.pa, curs, 1);
+    curs++;
+
+    memcpy(&info.pc, curs, 2);
+    curs += 2;
+
+    memcpy(&info.pm, curs, 2);
+    curs += 2;
+
+    /* calculate buffer size */
+
+    size_t offsets[3];
+    uint32_t lengths[3];
+    size_t buf_size = 0;
+    /* use another variable instead of then backtracking curs */
+    unsigned char* curs_tmp = curs;
+    for (size_t i = 0; i < 3; i++) {
+        memcpy(lengths + i, curs_tmp, 4);
+        if (lengths[i] > SIZE_MAX - exp) return -1;
+
+        exp += lengths[i];
+        if ((size_t)ret < exp) return -1;
+
+        offsets[i] = buf_size;
+        buf_size += lengths[i] + 1;
+        curs_tmp += 4 + lengths[i];
+    }
+
+    char* textbuf = malloc(buf_size);
+    if (textbuf == NULL) return -1;
+
+    for (size_t i = 0; i < 3; i++) {
+        curs += 4;
+        memcpy(textbuf + offsets[i], curs, lengths[i]);
+        textbuf[offsets[i] + lengths[i]] = '\0';
+        curs += lengths[i];
+    }
+
+    info.hn_off = offsets[0];
+    info.gm_off = offsets[1];
+    info.ln_off = offsets[2];
+
+    info.txt = textbuf;
+
+    info.ip = serv.sin_addr;
+    info.port = serv.sin_port;
+
+    *out = info;
+    return 0;
+}
+
+int servquery_destroy(void) {
+    if (sockfd == 0) return 1;
+
+    while (close(sockfd) < 0) {
+        if (errno != EINTR) return -1;
+    }
+
+    sockfd = 0;
+    return 0;
 }

@@ -54,6 +54,22 @@ static int servcmp(const void* s1_, const void* s2_) {
     return (cmp_field < 0) ? -ret : ret;
 }
 
+int servlist_resize(struct servlist** servers, size_t new_cap) {
+    if (servers == NULL || (*servers != NULL && (*servers)->len > new_cap))
+        return -1;
+
+    struct servlist* new_servers = realloc(
+        *servers, sizeof(struct servlist) + sizeof(struct servinfo) * new_cap);
+    if (new_servers == NULL) return -1;
+
+    if (*servers == NULL) *new_servers = (struct servlist){0};
+
+    new_servers->cap = new_cap;
+
+    *servers = new_servers;
+    return 0;
+}
+
 int sort_serverlist(struct servlist* servers, int8_t sort_field,
                     uint8_t filters, char* query) {
     if (servers == NULL) return -1;
@@ -87,13 +103,10 @@ int sort_serverlist(struct servlist* servers, int8_t sort_field,
 void servlist_free(struct servlist* servs) {
     if (servs == NULL) return;
 
-    if (servs->txt == NULL) {
-        for (size_t i = 0; i < servs->len; i++) {
-            free(servs->servs[i].txt);
-        }
-    } else {
-        free(servs->txt);
+    for (size_t i = 0; i < servs->len; i++) {
+        free(servs->servs[i].txt);
     }
+    free(servs->txt);
 
     free(servs);
 }
