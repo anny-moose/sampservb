@@ -409,6 +409,48 @@ static void call_add(const char** argv, void* cfg_) {
     tab->list->len++;
 }
 
+static void call_tabnew(const char** argv, void* cfg_) {
+    struct app_state* cfg = cfg_;
+    (void)argv;
+
+    if (cfg->tabs_count >= cfg->tabs_capacity) {
+        size_t new_cap = cfg->tabs_capacity + 1;
+        struct tab_state* new_tabs =
+            realloc(cfg->tabs, sizeof(*cfg->tabs) * new_cap);
+        if (new_tabs == NULL) {
+            notify("Failed to allocate!");
+            return;
+        }
+        cfg->tabs = new_tabs;
+        cfg->tabs_capacity = new_cap;
+    }
+
+    if (init_tab(&cfg->tabs[cfg->tabs_count]) < 0) {
+        notify("Failed to create tab!");
+        return;
+    }
+
+    cfg->tabs_selected = cfg->tabs_count;
+    cfg->tabs_count++;
+}
+
+static void call_tabmove(const char** argv, void* cfg_) {
+    struct app_state* cfg = cfg_;
+
+    int change = 1;
+    if (argv[1] != NULL) change = abs(atoi(argv[1]));
+
+    if (strcmp(argv[0], "tabnext") == 0) {
+        cfg->tabs_selected =
+            MIN(cfg->tabs_count - 1, cfg->tabs_selected + change);
+    } else {
+        if ((size_t)change > cfg->tabs_selected)
+            cfg->tabs_selected = 0;
+        else
+            cfg->tabs_selected -= change;
+    }
+}
+
 #define LVL_APPLICATION 1
 #define LVL_TAB 0
 
@@ -458,6 +500,24 @@ static const struct regcmd {
         .cmd = "add",
         .call = call_add,
         .expected_args = 3,
+    },
+    {
+        .cmd = "tabnew",
+        .call = call_tabnew,
+        .expected_args = 0,
+        .lvl = LVL_APPLICATION,
+    },
+    {
+        .cmd = "tabnext",
+        .call = call_tabmove,
+        .expected_args = 2,
+        .lvl = LVL_APPLICATION,
+    },
+    {
+        .cmd = "tabprev",
+        .call = call_tabmove,
+        .expected_args = 2,
+        .lvl = LVL_APPLICATION,
     },
 };
 

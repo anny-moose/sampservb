@@ -195,9 +195,9 @@ int main(void) {
 
     servquery_init();
 
-    struct tab_state t;
+    struct tab_state* t = malloc(sizeof(struct tab_state));
     struct app_state state = {
-        .tabs = &t,
+        .tabs = t,
         .tabs_count = 1,
         .tabs_capacity = 1,
         .servlist_win = status,
@@ -223,6 +223,7 @@ int main(void) {
         if (ch == ':') {
             getinput(":", buf, 63);
             handle_cmd(buf, &state);
+            tab = state.tabs + state.tabs_selected;
             sort_serverlist(tab->list, tab->sort, tab->filters,
                             tab->search_buf);
             draw_serverlist(status, tab->list, tab->display, tab->selected);
@@ -264,6 +265,7 @@ int main(void) {
     servquery_destroy();
 
     for (size_t i = 0; i < state.tabs_count; i++) free_tab(state.tabs + i);
+    free(state.tabs);
 
     delwin(status);
     delwin(sortwin);
