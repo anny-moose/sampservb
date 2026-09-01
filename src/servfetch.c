@@ -1,5 +1,3 @@
-/* TODO: rewrite this because of shady/poor code quality and hardcoded api */
-
 #include "servfetch.h"
 
 #include <arpa/inet.h>
@@ -39,61 +37,18 @@ static size_t mem_cb(void* contents, size_t size, size_t nmemb, void* userp) {
     return realsize;
 }
 
-enum dispatcher {
-    DISPATCH_INT = 0,
-    DISPATCH_STR = 1,
-    DISPATCH_BOOL = 2,
-    DISPATCH_IP = 4,
-    DISPATCH_NONE = 5,
+static const size_t string_offsets[3] = {
+    offsetof(struct servinfo, hn_off),
+    offsetof(struct servinfo, gm_off),
+    offsetof(struct servinfo, ln_off),
 };
-/* signature: X(name_serverside, name_struct, type, dispatcher) */
-
-#define SERVER_FIELDS                       \
-    X(ip, ip, struct in_addr, DISPATCH_IP)  \
-    X(_port, port, uint16_t, DISPATCH_NONE) \
-    X(pc, pc, uint16_t, DISPATCH_INT)       \
-    X(pm, pm, uint16_t, DISPATCH_INT)       \
-    X(pa, pa, bool, DISPATCH_BOOL)          \
-    X(hn, hn_off, size_t, DISPATCH_STR)     \
-    X(gm, gm_off, size_t, DISPATCH_STR)     \
-    X(la, ln_off, size_t, DISPATCH_STR)
-
-#define ASSERT_INT(key, entry, fail_label)        \
-    do {                                          \
-        (key) = cJSON_GetObjectItem(entry, #key); \
-        if (!cJSON_IsNumber((key))) {             \
-            warnx(#key "isn't a number! Fail.");  \
-            goto fail_label;                      \
-        }                                         \
-    } while (0)
-
-#define ASSERT_BOOL(key, entry, fail_label)       \
-    do {                                          \
-        (key) = cJSON_GetObjectItem(entry, #key); \
-        if (!cJSON_IsBool((key))) {               \
-            warnx(#key "isn't a bool! Fail.");    \
-            goto fail_label;                      \
-        }                                         \
-    } while (0)
-
-#define GET_STRING(key, entry, buf_size, fail_label)  \
-    do {                                              \
-        (key) = cJSON_GetObjectItem((entry), #key);   \
-        if (!cJSON_IsString((key))) {                 \
-            warnx(#key "isn't a string! Fail.");      \
-            goto fail_label;                          \
-        }                                             \
-        (buf_size) += strlen((key)->valuestring) + 1; \
-    } while (0)
 
 #define BUF_SIZE 4096
-static int parse_servers(const char* json, struct servlist** out) {
+#define GETOBJ(cjson, name) cJSON_GetObjectItemCaseSensitive(cjson, name)
+static int parse_servers(const char* json, struct json_keys keys,
+                         struct servlist** out) {
     int ret = -1;
-
-    if (json == NULL) {
-        warnx("json passed to parse_servers was NULL");
-        return ret;
-    }
+    if (json == NULL) return -1;
 
     cJSON* parsed = cJSON_Parse(json);
     if (parsed == NULL) {
@@ -101,28 +56,27 @@ static int parse_servers(const char* json, struct servlist** out) {
         if (error_ptr != NULL) {
             warnx("Json parsing error: %s", error_ptr);
         }
+        ret = -2;
         goto end;
     }
 
-#define X(name_serverside, name_struct, type, dispatcher) \
-    const cJSON*(name_serverside) = NULL;
-    SERVER_FIELDS
-#undef X
-
-#define X(name_serverside, name_struct, type, dispatcher) \
-    type name_struct##_local;
-    SERVER_FIELDS
-#undef X
-
+    if (!cJSON_IsArray(parsed)) {
+        warnx("Server list isn't an array");
+        ret = -2;
+        goto end_free;
+    }
     size_t arr_size = cJSON_GetArraySize(parsed);
-    if (out == NULL) return arr_size;
+    if (out == NULL) {
+        ret = arr_size > INT_MAX ? INT_MAX : arr_size;
+        goto end;
+    }
 
     size_t alloc_size =
         sizeof(struct servlist) + sizeof(struct servinfo) * arr_size;
     struct servlist* list = malloc(alloc_size);
     if (list == NULL) {
         warn("Malloc of %zu bytes failed", alloc_size);
-        goto end;
+        goto end_free;
     }
     list->cap = arr_size;
 
@@ -130,82 +84,81 @@ static int parse_servers(const char* json, struct servlist** out) {
     char* textbuf = malloc(BUF_SIZE);
     if (textbuf == NULL) {
         warnx("Failed to allocate textbuf");
-        goto fail;
+        goto end_freetext;
     }
 
     size_t buf_used = 0;
     size_t buf_size = BUF_SIZE;
-    const cJSON* entry = NULL;
-    char* tmp = NULL;
-    cJSON_ArrayForEach(entry, parsed) {
-#define X(name_serverside, name_struct, type, dispatcher)                   \
-    switch (dispatcher) {                                                   \
-        case DISPATCH_INT:                                                  \
-            ASSERT_INT(name_serverside, entry, fail);                       \
-            name_struct##_local = (type){name_serverside->valuedouble};     \
-            break;                                                          \
-        case DISPATCH_BOOL:                                                 \
-            ASSERT_BOOL(name_serverside, entry, fail);                      \
-            name_struct##_local = (type){cJSON_IsTrue(name_serverside)};    \
-            break;                                                          \
-        case DISPATCH_IP:                                                   \
-            name_serverside = cJSON_GetObjectItem(entry, #name_serverside); \
-            if (!cJSON_IsString(name_serverside)) {                         \
-                warnx(#name_serverside "isn't a string! Fail.");            \
-                goto fail;                                                  \
-            }                                                               \
-            tmp = strchr(name_serverside->valuestring, ':');                \
-            if (tmp == NULL) {                                              \
-                warnx("Failed to read port");                               \
-                goto fail;                                                  \
-            }                                                               \
-            port_local = htons(atoi(tmp + 1));                              \
-            *tmp = '\0';                                                    \
-            if (inet_pton(AF_INET, name_serverside->valuestring,            \
-                          &(name_struct##_local)) != 1) {                   \
-                warnx("Failed to read IP");                                 \
-                goto fail;                                                  \
-            }                                                               \
-            *tmp = ':';                                                     \
-                                                                            \
-            /* TODO: IPPORT!!! */                                           \
-            break;                                                          \
-        case DISPATCH_STR:                                                  \
-            name_struct##_local = (type){buf_used};                         \
-            GET_STRING(name_serverside, entry, buf_used, fail);             \
-            break;                                                          \
-        case DISPATCH_NONE:                                                 \
-            break;                                                          \
-    }
+    const cJSON *serv = NULL, *pa, *pc, *pm, *ip, *txt[3];
+    struct servinfo* info;
+    ret = -2;
+    cJSON_ArrayForEach(serv, parsed) {
+        info = list->servs + server_count;
 
-        SERVER_FIELDS
-#undef X
+        // clang-format off
+        if (!cJSON_IsObject(serv)
+            || !cJSON_IsBool(pa = GETOBJ(serv, keys.pa_key))
+            || !cJSON_IsString(ip = GETOBJ(serv, keys.ip_key))
+            || !cJSON_IsNumber(pc = GETOBJ(serv, keys.pc_key))
+            || !cJSON_IsNumber(pm = GETOBJ(serv, keys.pm_key))
+            || !cJSON_IsString(txt[0] = GETOBJ(serv, keys.string_keys[0]))
+            || !cJSON_IsString(txt[1] = GETOBJ(serv, keys.string_keys[1]))
+            || !cJSON_IsString(txt[2] = GETOBJ(serv, keys.string_keys[2]))
+            )
+            goto end_freetext;
+        // clang-format on
+
+        info->pa = cJSON_IsTrue(pa);
+
+        if (pc->valueint < 0 || pc->valueint > 1000) goto end_freetext;
+        info->pc = pc->valueint;
+
+        if (pm->valueint < 0 || pm->valueint > 1000) goto end_freetext;
+        info->pm = pm->valueint;
+
+        char ip_str[INET_ADDRSTRLEN + 6];
+        strncpy(ip_str, ip->valuestring, sizeof(ip_str) - 1);
+        ip_str[sizeof(ip_str) - 1] = '\0';
+
+        char* port = strchr(ip_str, ':');
+        if (port == NULL) goto end_freetext;
+        *port = '\0';
+        port++;
+
+        if (inet_pton(AF_INET, ip_str, &info->ip) != 1) goto end_freetext;
+
+        long portx = strtol(port, NULL, 10);
+        if (portx <= 0 || portx > UINT16_MAX) goto end_freetext;
+        info->port = htons(portx);
+
+        size_t offset[3];
+        for (size_t i = 0; i < 3; i++) {
+            offset[i] = buf_used;
+            size_t len = strlen(txt[i]->valuestring);
+            if (SIZE_MAX - buf_used <= len) {
+                ret = -1;
+                goto end_freetext;
+            }
+
+            buf_used += len + 1;
+        }
 
         if (buf_used > buf_size) {
             while (buf_used > buf_size) buf_size += buf_size / 2;
-
             char* new_buf = realloc(textbuf, buf_size);
             if (new_buf == NULL) {
-                warn("failed to (re)allocate text buffer of size %zu",
-                     buf_size);
-            fail:
-                free(textbuf);
-                free(list);
-                goto end;
+                ret = -1;
+                goto end_freetext;
             }
             textbuf = new_buf;
         }
 
-#define X(name_serverside, name_struct, type, dispatcher) \
-    list->servs[server_count].name_struct = name_struct##_local;
-        SERVER_FIELDS
-#undef X
+        for (size_t i = 0; i < 3; i++) {
+            strcpy(textbuf + offset[i], txt[i]->valuestring);
+            *(size_t*)(((char*)info) + string_offsets[i]) = offset[i];
+        }
+        info->txt = NULL;
 
-        list->servs[server_count].txt = NULL;
-
-        strcpy(textbuf + hn_off_local, hn->valuestring);
-        strcpy(textbuf + gm_off_local, gm->valuestring);
-        strcpy(textbuf + ln_off_local, la->valuestring);
         server_count++;
     }
 
@@ -216,8 +169,14 @@ static int parse_servers(const char* json, struct servlist** out) {
     ret = 0;
     *out = list;
 
-end:
+end_freetext:
+    if (ret < 0) {
+        free(textbuf);
+        free(list);
+    }
+end_free:
     cJSON_Delete(parsed);
+end:
     return ret;
 }
 
@@ -252,7 +211,15 @@ struct servlist* fetch_servers(const char* url) {
     struct servlist* list;
     char* raw = get_resp(url);
     if (raw == NULL) return NULL;
-    if (parse_servers(raw, &list) < 0) {
+    struct json_keys def = {
+        .ip_key = "ip",
+        .pa_key = "pa",
+        .pc_key = "pc",
+        .pm_key = "pm",
+        .string_keys = {"hn", "gm", "la"},
+    };
+
+    if (parse_servers(raw, def, &list) < 0) {
         free(raw);
         return NULL;
     }
