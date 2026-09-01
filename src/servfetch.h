@@ -13,7 +13,7 @@ struct json_keys {
                              language */
 };
 
-struct servlist* fetch_servers(const char* url);
+struct servlist* fetch_servers(const char* url, struct json_keys keys);
 
 int servquery_init(void);
 int servquery_info(struct sockaddr_in serv, struct servinfo* out);

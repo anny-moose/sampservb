@@ -338,7 +338,43 @@ static void call_fetch(const char** argv, void* cfg_) {
         remote = argv[1];
     }
 
-    struct servlist* new_list = fetch_servers(remote);
+    char* params = NULL;
+    struct json_keys keys = {
+        .pa_key = "pa",
+        .ip_key = "ip",
+        .pc_key = "pc",
+        .pm_key = "pm",
+        .string_keys = {"hn", "gm", "la"},
+    };
+    if (argv[2] != NULL) {
+        params = strdup(argv[2]);
+        if (params == NULL) {
+            notify("Failed to allocate memory: %s", strerror(errno));
+            return;
+        }
+
+        char* param = params;
+        /* this is like. really ugly */
+#define GETTOK(dst)             \
+    (dst) = param;              \
+    param = strchr(param, ';'); \
+    if (param == NULL) break;   \
+    *param = '\0';              \
+    param++;
+        do {
+            GETTOK(keys.pa_key);
+            GETTOK(keys.ip_key);
+            GETTOK(keys.pc_key);
+            GETTOK(keys.pm_key);
+
+            for (size_t i = 0; i < 3; i++) {
+                GETTOK(keys.string_keys[i]);
+            }
+        } while (0);
+    }
+
+    struct servlist* new_list = fetch_servers(remote, keys);
+    free(params);
     if (new_list == NULL) {
         notify("Failed to fetch server list.");
         return;
@@ -494,7 +530,7 @@ static const struct regcmd {
     {
         .cmd = "fetch",
         .call = call_fetch,
-        .expected_args = 2,
+        .expected_args = 3,
     },
     {
         .cmd = "add",

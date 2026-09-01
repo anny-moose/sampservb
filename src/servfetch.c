@@ -207,19 +207,12 @@ static char* get_resp(const char* url) {
     return json.memory;
 }
 
-struct servlist* fetch_servers(const char* url) {
+struct servlist* fetch_servers(const char* url, struct json_keys keys) {
     struct servlist* list;
     char* raw = get_resp(url);
     if (raw == NULL) return NULL;
-    struct json_keys def = {
-        .ip_key = "ip",
-        .pa_key = "pa",
-        .pc_key = "pc",
-        .pm_key = "pm",
-        .string_keys = {"hn", "gm", "la"},
-    };
 
-    if (parse_servers(raw, def, &list) < 0) {
+    if (parse_servers(raw, keys, &list) < 0) {
         free(raw);
         return NULL;
     }
