@@ -24,17 +24,19 @@ struct set_num_params {
     struct set_bounds bounds;
 };
 
+/*
 void set_fixedstr(void* target, const char* setting, void* params);
 void set_charp(void* target, const char* setting, void* params);
 void set_num(void* target, const char* setting, void* params);
 void set_filter(void* target, const char* setting, void* params);
 void set_sort(void* target, const char* setting, void* params);
+*/
 
 struct setmap {
     const char* name;
-    void* target;
-    void (*setfunc)(void* target, const char* setting, void* params);
-    void* params;
+    size_t offset;
+    void (*setfunc)(void* target, const char* setting, const void* params);
+    const void* params;
 };
 
 /* --Stuff for setting up the set mappings */

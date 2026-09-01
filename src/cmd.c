@@ -135,8 +135,8 @@ launch:
     notify("Launched game process: %jd", (intmax_t)child);
 }
 
-void set_fixedstr(void* target, const char* setting, void* params) {
-    struct set_bounds* cfg = params;
+void set_fixedstr(void* target, const char* setting, const void* params) {
+    const struct set_bounds* cfg = params;
 
     size_t len = strlen(setting);
     if (len < cfg->lower.usize || len > cfg->upper.usize) {
@@ -150,7 +150,7 @@ void set_fixedstr(void* target, const char* setting, void* params) {
     strcpy(target, setting);
 }
 
-void set_charp(void* target_, const char* setting, void* params) {
+void set_charp(void* target_, const char* setting, const void* params) {
     (void)params;
     if (target_ == NULL) return;
 
@@ -164,10 +164,10 @@ void set_charp(void* target_, const char* setting, void* params) {
     if (setting != NULL && *setting != '\0') *target = strdup(setting);
 }
 
-void set_num(void* target, const char* setting, void* params) {
+void set_num(void* target, const char* setting, const void* params) {
     if (params == NULL || setting == NULL || target == NULL || *setting == '\0')
         return;
-    struct set_num_params* cfg = params;
+    const struct set_num_params* cfg = params;
 
     errno = 0;
     long num = strtol(setting, (char**)NULL, 10);
@@ -194,7 +194,7 @@ void set_num(void* target, const char* setting, void* params) {
     }
 }
 
-void set_filter(void* target, const char* setting, void* params) {
+void set_filter(void* target, const char* setting, const void* params) {
     (void)params;
     if (target == NULL || setting == NULL) {
         return;
@@ -218,7 +218,7 @@ void set_filter(void* target, const char* setting, void* params) {
     // sort_serverlist(, cfg.sort, *filter, buf);
 }
 
-void set_sort(void* target, const char* setting, void* params) {
+void set_sort(void* target, const char* setting, const void* params) {
     (void)params;
     if (target == NULL || setting == NULL || *setting == '\0') {
         return;
@@ -253,6 +253,44 @@ void set_sort(void* target, const char* setting, void* params) {
     *sort = new_sort;
 }
 
+const static struct set_bounds uname = {
+    .lower.usize = 3,
+    .upper.usize = 24,
+};
+
+const static struct setmap maps[] = {
+    {
+        .name = "exec_cmd",
+        .offset = offsetof(struct tab_state, exec_cmd),
+        .setfunc = set_charp,
+    },
+    {
+        .name = "username",
+        .offset = offsetof(struct tab_state, username),
+        .setfunc = set_fixedstr,
+        .params = &uname,
+    },
+    {
+        .name = "filter",
+        .offset = offsetof(struct tab_state, filters),
+        .setfunc = set_filter,
+        /* .params = */
+    },
+    {
+        .name = "shown",
+        .offset = offsetof(struct tab_state, display) +
+                  offsetof(struct display_cfg, shown_fields),
+        .setfunc = set_sort,
+        .params = (void*)1,
+    },
+    {
+        .name = "sort",
+        .offset = offsetof(struct tab_state, sort),
+        .setfunc = set_sort,
+        /* .params = */
+    },
+};
+
 static void call_set(const char** argv, void* cfg_) {
     struct tab_state* cfg = cfg_;
     if (argv[1] == NULL || argv[2] == NULL) {
@@ -260,10 +298,10 @@ static void call_set(const char** argv, void* cfg_) {
         return;
     }
 
-    for (size_t map = 0; map < cfg->map_count; map++) {
-        struct setmap* curr = cfg->map + map;
+    for (size_t map = 0; map < sizeof(maps) / sizeof(maps[0]); map++) {
+        const struct setmap* curr = maps + map;
         if (strcmp(argv[1], curr->name) == 0) {
-            curr->setfunc(curr->target, argv[2], curr->params);
+            curr->setfunc(((char*)cfg) + curr->offset, argv[2], curr->params);
             return;
         }
     }
