@@ -17,14 +17,15 @@
 
 extern char** environ;
 
-static void call_quit(const char** argv, void* cfg_) {
+static sidefx call_quit(const char** argv, void* cfg_) {
     (void)argv;
     struct app_state* cfg = cfg_;
 
     cfg->quit = true;
+    return 0;
 }
 
-static void call_echo(const char** argv, void* cfg_) {
+static sidefx call_echo(const char** argv, void* cfg_) {
     (void)cfg_;
     char buf[64] = {0};
 
@@ -35,24 +36,25 @@ static void call_echo(const char** argv, void* cfg_) {
     }
 
     notify(buf);
+    return 0;
 }
 
-static void call_connect(const char** argv, void* cfg_) {
+static sidefx call_connect(const char** argv, void* cfg_) {
     struct app_state* cfg = cfg_;
     struct tab_state* tab = cfg->tabs + cfg->tabs_selected;
     if (tab->exec_cmd == NULL) {
         notify("exec_cmd Isn't set!");
-        return;
+        return 0;
     }
 
     if (*tab->username == '\0') {
         notify("username Isn't set!");
-        return;
+        return 0;
     }
 
     if (child_spawned != 0) {
         notify("Game process already exists: %jd", (intmax_t)cfg->game_proc);
-        return;
+        return 0;
     }
 
     const char* generic_err =
@@ -64,7 +66,7 @@ static void call_connect(const char** argv, void* cfg_) {
     if (argv[1] == NULL) {
         if (tab->list == NULL || tab->selected >= tab->list->num_displayed) {
             notify(generic_err);
-            return;
+            return 0;
         }
 
         const struct servinfo* serv = tab->list->servs + tab->selected;
@@ -84,12 +86,12 @@ static void call_connect(const char** argv, void* cfg_) {
     int ret = getaddrinfo(argv[1], NULL, &hints, &resp);
     if (ret != 0) {
         notify("Failed to resolve address: %s", gai_strerror(ret));
-        return;
+        return 0;
     }
     if (resp->ai_addr->sa_family != AF_INET) {
         notify("Failed to resolve address");
         freeaddrinfo(resp);
-        return;
+        return 0;
     }
     struct sockaddr_in addr = *(struct sockaddr_in*)(resp->ai_addr);
     freeaddrinfo(resp);
@@ -101,7 +103,7 @@ static void call_connect(const char** argv, void* cfg_) {
         portx = atoi(argv[2]);
         if (portx > UINT16_MAX || portx < 0) {
             notify("Port falls outside of the valid range");
-            return;
+            return 0;
         }
     }
 
@@ -128,14 +130,16 @@ launch:
     } else if (child == -1) {
         child_spawned = 0;
         notify("Failed to launch the game process: %s", strerror(errno));
-        return;
+        return 0;
     }
 
     cfg->game_proc = child;
     notify("Launched game process: %jd", (intmax_t)child);
+    return 0;
 }
 
-void set_fixedstr(void* target, const char* setting, const void* params) {
+static void set_fixedstr(void* target, const char* setting,
+                         const void* params) {
     const struct set_bounds* cfg = params;
 
     size_t len = strlen(setting);
@@ -150,7 +154,7 @@ void set_fixedstr(void* target, const char* setting, const void* params) {
     strcpy(target, setting);
 }
 
-void set_charp(void* target_, const char* setting, const void* params) {
+static void set_charp(void* target_, const char* setting, const void* params) {
     (void)params;
     if (target_ == NULL) return;
 
@@ -164,7 +168,9 @@ void set_charp(void* target_, const char* setting, const void* params) {
     if (setting != NULL && *setting != '\0') *target = strdup(setting);
 }
 
-void set_num(void* target, const char* setting, const void* params) {
+/* Temorarily commented out due to compiler warning */
+/*
+static void set_num(void* target, const char* setting, const void* params) {
     if (params == NULL || setting == NULL || target == NULL || *setting == '\0')
         return;
     const struct set_num_params* cfg = params;
@@ -193,8 +199,9 @@ void set_num(void* target, const char* setting, const void* params) {
             return;
     }
 }
+*/
 
-void set_filter(void* target, const char* setting, const void* params) {
+static void set_filter(void* target, const char* setting, const void* params) {
     (void)params;
     if (target == NULL || setting == NULL) {
         return;
@@ -218,7 +225,7 @@ void set_filter(void* target, const char* setting, const void* params) {
     // sort_serverlist(, cfg.sort, *filter, buf);
 }
 
-void set_sort(void* target, const char* setting, const void* params) {
+static void set_sort(void* target, const char* setting, const void* params) {
     (void)params;
     if (target == NULL || setting == NULL || *setting == '\0') {
         return;
@@ -274,7 +281,7 @@ const static struct setmap maps[] = {
         .name = "filter",
         .offset = offsetof(struct tab_state, filters),
         .setfunc = set_filter,
-        /* .params = */
+        .fx = REFRESH_SORT | REFRESH_LIST,
     },
     {
         .name = "shown",
@@ -282,38 +289,42 @@ const static struct setmap maps[] = {
                   offsetof(struct display_cfg, shown_fields),
         .setfunc = set_sort,
         .params = (void*)1,
+        .fx = REFRESH_LIST,
     },
     {
         .name = "sort",
         .offset = offsetof(struct tab_state, sort),
         .setfunc = set_sort,
-        /* .params = */
+        .fx = REFRESH_SORT | REFRESH_LIST,
     },
 };
 
-static void call_set(const char** argv, void* cfg_) {
+static sidefx call_set(const char** argv, void* cfg_) {
     struct tab_state* cfg = cfg_;
     if (argv[1] == NULL || argv[2] == NULL) {
         notify("Must provide 2 arguments to set");
-        return;
+        return 0;
     }
 
     for (size_t map = 0; map < sizeof(maps) / sizeof(maps[0]); map++) {
         const struct setmap* curr = maps + map;
         if (strcmp(argv[1], curr->name) == 0) {
             curr->setfunc(((char*)cfg) + curr->offset, argv[2], curr->params);
-            return;
+            return curr->fx;
         }
     }
+
     notify("%s isn't a valid setting!", argv[1]);
+    return 0;
 }
 
-static void call_source(const char** argv, void* cfg_) {
+static sidefx call_source(const char** argv, void* cfg_) {
     struct app_state* cfg = cfg_;
+    sidefx ret = 0;
 
     if (argv[1] == NULL || *argv[1] == '\0') {
         notify("Must specify rc file");
-        return;
+        return ret;
     }
 
     char path[PATH_MAX + 1]; /* this is the most hacky-feeling relatively
@@ -324,12 +335,12 @@ static void call_source(const char** argv, void* cfg_) {
         const char* home_path = getenv("HOME");
         if (home_path == NULL) {
             notify("HOME not set, can't expand '~'");
-            return;
+            return ret;
         }
 
         if (strlen(home_path) + strlen(argv[1]) - 1 > PATH_MAX) {
             notify("path length exceeds PATH_MAX");
-            return;
+            return ret;
         }
 
         strcat(path, home_path);
@@ -337,7 +348,7 @@ static void call_source(const char** argv, void* cfg_) {
     } else {
         if (strlen(argv[1]) > PATH_MAX) {
             notify("path length exceeds PATH_MAX");
-            return;
+            return ret;
         }
 
         strcat(path, argv[1]);
@@ -346,15 +357,24 @@ static void call_source(const char** argv, void* cfg_) {
     FILE* f = fopen(path, "r");
     if (f == NULL) {
         notify("Failed to open the file: %s", strerror(errno));
-        return;
+        return ret;
     }
 
     char* cmd = NULL;
     size_t length = 0;
+
+    struct tab_state* tab = cfg->tabs + cfg->tabs_selected;
     while (getline(&cmd, &length, f) > 0) {
         cmd[strlen(cmd) - 1] =
             '\0'; /* trim the newline at the end that getline leaves */
-        handle_cmd(cmd, cfg);
+        ret |= handle_cmd(cmd, cfg);
+        if (ret & REFRESH_TAB) tab = cfg->tabs + cfg->tabs_selected;
+
+        if (ret & REFRESH_SORT) {
+            ret ^= REFRESH_SORT;
+            sort_serverlist(tab->list, tab->sort, tab->filters,
+                            tab->search_buf);
+        }
     }
 
     if (ferror(f) != 0) {
@@ -364,9 +384,10 @@ static void call_source(const char** argv, void* cfg_) {
 
     fclose(f);
     free(cmd);
+    return ret;
 }
 
-static void call_fetch(const char** argv, void* cfg_) {
+static sidefx call_fetch(const char** argv, void* cfg_) {
     struct tab_state* cfg = cfg_;
 
     const char* remote = "https://api.open.mp/servers";
@@ -388,7 +409,7 @@ static void call_fetch(const char** argv, void* cfg_) {
         params = strdup(argv[2]);
         if (params == NULL) {
             notify("Failed to allocate memory: %s", strerror(errno));
-            return;
+            return 0;
         }
 
         char* param = params;
@@ -415,14 +436,15 @@ static void call_fetch(const char** argv, void* cfg_) {
     free(params);
     if (new_list == NULL) {
         notify("Failed to fetch server list.");
-        return;
+        return 0;
     }
 
     servlist_free(cfg->list);
     cfg->list = new_list;
+    return REFRESH_SORT | REFRESH_LIST;
 }
 
-static void call_add(const char** argv, void* cfg_) {
+static sidefx call_add(const char** argv, void* cfg_) {
     struct tab_state* tab = cfg_;
 
     const char* generic_err =
@@ -430,7 +452,7 @@ static void call_add(const char** argv, void* cfg_) {
 
     if (argv[1] == NULL) {
         notify(generic_err);
-        return;
+        return 0;
     }
 
     const struct addrinfo hints = {
@@ -443,12 +465,12 @@ static void call_add(const char** argv, void* cfg_) {
     int ret = getaddrinfo(argv[1], NULL, &hints, &resp);
     if (ret != 0) {
         notify("Failed to resolve address: %s", gai_strerror(ret));
-        return;
+        return 0;
     }
     if (resp->ai_addr->sa_family != AF_INET) {
         notify("Failed to resolve address");
         freeaddrinfo(resp);
-        return;
+        return 0;
     }
     struct sockaddr_in addr = *(struct sockaddr_in*)(resp->ai_addr);
     freeaddrinfo(resp);
@@ -460,7 +482,7 @@ static void call_add(const char** argv, void* cfg_) {
         portx = atoi(argv[2]);
         if (portx > UINT16_MAX || portx < 0) {
             notify("Port falls outside of the valid range");
-            return;
+            return 0;
         }
     }
 
@@ -471,19 +493,21 @@ static void call_add(const char** argv, void* cfg_) {
         if (servlist_resize(&tab->list, 
                 tab->list != NULL ? tab->list->cap + tab->list->cap / 2 : 2) < 0) {
             notify("Failed to allocate");
-            return;
+            return 0;
         }
     // clang-format on
 
     ret = servquery_info(addr, tab->list->servs + tab->list->len);
     if (ret < 0) {
         notify("Failed to query server: %d", ret);
-        return;
+        return 0;
     }
     tab->list->len++;
+
+    return REFRESH_SORT | REFRESH_LIST;
 }
 
-static void call_tabnew(const char** argv, void* cfg_) {
+static sidefx call_tabnew(const char** argv, void* cfg_) {
     struct app_state* cfg = cfg_;
     (void)argv;
 
@@ -493,7 +517,7 @@ static void call_tabnew(const char** argv, void* cfg_) {
             realloc(cfg->tabs, sizeof(*cfg->tabs) * new_cap);
         if (new_tabs == NULL) {
             notify("Failed to allocate!");
-            return;
+            return 0;
         }
         cfg->tabs = new_tabs;
         cfg->tabs_capacity = new_cap;
@@ -501,14 +525,16 @@ static void call_tabnew(const char** argv, void* cfg_) {
 
     if (init_tab(&cfg->tabs[cfg->tabs_count]) < 0) {
         notify("Failed to create tab!");
-        return;
+        return 0;
     }
 
     cfg->tabs_selected = cfg->tabs_count;
     cfg->tabs_count++;
+
+    return REFRESH_TAB | REFRESH_LIST;
 }
 
-static void call_tabmove(const char** argv, void* cfg_) {
+static sidefx call_tabmove(const char** argv, void* cfg_) {
     struct app_state* cfg = cfg_;
 
     int change = 1;
@@ -523,6 +549,8 @@ static void call_tabmove(const char** argv, void* cfg_) {
         else
             cfg->tabs_selected -= change;
     }
+
+    return REFRESH_TAB | REFRESH_LIST;
 }
 
 #define LVL_APPLICATION 1
@@ -530,7 +558,7 @@ static void call_tabmove(const char** argv, void* cfg_) {
 
 static const struct regcmd {
     const char* cmd;
-    void (*call)(const char**, void*);
+    sidefx (*call)(const char**, void*);
     size_t expected_args;
     uint8_t lvl;
 } commands[] = {
@@ -599,8 +627,8 @@ static const struct regcmd {
 #if CMD_TOKS <= 1 || CMD_TOKS == SIZE_MAX
 #error Definition of CMD_TOKS falls out of the valid range [2, SIZE_MAX)
 #endif
-void handle_cmd(char* cmd, struct app_state* cfg) {
-    if (cmd == NULL || cfg == NULL) return;
+sidefx handle_cmd(char* cmd, struct app_state* cfg) {
+    if (cmd == NULL || cfg == NULL) return 0;
 
     char* toks[CMD_TOKS + 1] = {0};
     size_t parsed_toks = 0;
@@ -645,7 +673,9 @@ void handle_cmd(char* cmd, struct app_state* cfg) {
                     arg = NULL;
             }
 
-            commands[i].call((const char**)toks, arg);
+            return commands[i].call((const char**)toks, arg);
         }
     }
+
+    return 0;
 }

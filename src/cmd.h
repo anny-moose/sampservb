@@ -24,23 +24,22 @@ struct set_num_params {
     struct set_bounds bounds;
 };
 
-/*
-void set_fixedstr(void* target, const char* setting, void* params);
-void set_charp(void* target, const char* setting, void* params);
-void set_num(void* target, const char* setting, void* params);
-void set_filter(void* target, const char* setting, void* params);
-void set_sort(void* target, const char* setting, void* params);
-*/
+#define REFRESH_LIST 0x01
+#define REFRESH_SORT 0x02
+#define REFRESH_TAB 0x04
+
+typedef unsigned char sidefx;
 
 struct setmap {
     const char* name;
     size_t offset;
     void (*setfunc)(void* target, const char* setting, const void* params);
+    sidefx fx;
     const void* params;
 };
 
 /* --Stuff for setting up the set mappings */
 
-void handle_cmd(char* cmd, struct app_state* cfg);
+sidefx handle_cmd(char* cmd, struct app_state* cfg);
 
 #endif
