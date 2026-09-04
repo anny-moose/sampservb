@@ -147,8 +147,6 @@ int draw_serverlist(WINDOW* win, const struct servlist* servers,
         if (selected == i) wattroff(win, COLOR_PAIR(SEL_PAIR));
     }
 
-    wrefresh(win);
-
     return 0;
 }
 
@@ -211,61 +209,62 @@ int main(void) {
     draw_frame(sortwin, tab->display, 0);
 
     char buf[64] = {0};
-    bool filtering = false;
-    int8_t curr_sort = FIELD_NAME;
+    sidefx fx;
     while (state.quit == false) {
         int ch = getch();
         tab = state.tabs + state.tabs_selected;
 
-        /* TODO: this is messy. i was thinking, maybe every hotkey (besides ':')
-         * should just be a cmd call, i.e k would just quietly call :Up, or
-         * something like that. */
-        if (ch == ':') {
-            getinput(":", buf, 63);
-            handle_cmd(buf, &state);
-            tab = state.tabs + state.tabs_selected;
-            sort_serverlist(tab->list, tab->sort, tab->filters,
-                            tab->search_buf);
-            draw_serverlist(status, tab->list, tab->display, tab->selected);
-            wrefresh(status);
-        } else if (tab->list == NULL) {
-        } else if (ch == KEY_UP || ch == 'k') {
-            if (tab->selected > 0) tab->selected--;
-        } else if (ch == KEY_DOWN || ch == 'j') {
-            if (tab->selected < tab->list->num_displayed - 1) tab->selected++;
-        } else if (ch == KEY_LEFT || ch == 'h') {
-            if ((curr_sort & 0x1) == 0) curr_sort >>= 1;
-        } else if (ch == KEY_RIGHT || ch == 'l') {
-            if ((curr_sort & 0x10) == 0) curr_sort <<= 1;
-        } else if (ch == '\n') {
-            if (filtering) {
-                if (tab->sort == curr_sort)
-                    tab->sort |= (int8_t)INT8_MIN;
-                else
-                    tab->sort = curr_sort;
-                sort_serverlist(tab->list, tab->sort, tab->filters,
-                                tab->search_buf);
-            } else {
-                handle_cmd("connect", &state);
-            }
-        } else if (ch == '/') {
-            getinput("Enter search request: ", tab->search_buf, 63);
-            sort_serverlist(tab->list, tab->sort, tab->filters,
-                            tab->search_buf);
-            if (tab->list->num_displayed < tab->selected)
-                tab->selected = tab->list->num_displayed - 1;
-        } else if (ch == '\t') {
-            filtering = !filtering;
+        size_t idx;
+
+        switch (ch) {
+            case '\n':
+                idx = ':' - 32;
+                break;
+            case '\t':
+                idx = '/' - 32;
+                break;
+            default:
+                idx = ch - 32;
         }
 
-        draw_frame(sortwin, tab->display, filtering ? curr_sort : 0);
-        draw_serverlist(status, tab->list, tab->display, tab->selected);
+        if (idx >= 95) {
+            continue;
+        }
+
+        /* I don't particularly like this approach either to be honest, but it's
+         * ever so slightly less static than the last one. */
+        if (ch == ':') {
+            getinput(":", buf, 63);
+            fx = handle_cmd(buf, &state);
+        } else if (ch == '/') {
+            getinput("Enter search request: ", tab->search_buf, 63);
+            if (tab->list->num_displayed < tab->selected)
+                tab->selected = tab->list->num_displayed - 1;
+            fx = REFRESH_SORT | REFRESH_LIST;
+        } else {
+            fx = keymapping_call(state.keycmd[idx], &state);
+        }
+
+        if (fx & REFRESH_TAB) tab = state.tabs + state.tabs_selected;
+        if (fx & REFRESH_SORT)
+            sort_serverlist(tab->list, tab->sort, tab->filters,
+                            tab->search_buf);
+        if (fx & REFRESH_LIST) {
+            draw_serverlist(status, tab->list, tab->display, tab->selected);
+            wrefresh(status);
+        }
+
+        draw_frame(sortwin, tab->display, tab->visual_sort);
+        fx = 0;
     }
 
     servquery_destroy();
 
     for (size_t i = 0; i < state.tabs_count; i++) free_tab(state.tabs + i);
     free(state.tabs);
+
+    for (size_t i = 0; i < sizeof(state.keycmd) / sizeof(state.keycmd[0]); i++)
+        free(state.keycmd[i]);
 
     delwin(status);
     delwin(sortwin);

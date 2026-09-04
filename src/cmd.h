@@ -3,8 +3,6 @@
 
 #include <stddef.h>
 
-#include "states.h"
-
 /* Stuff for setting up the set mappings */
 
 union set_bound {
@@ -40,6 +38,10 @@ struct setmap {
 
 /* --Stuff for setting up the set mappings */
 
+struct keymapping;
+
+struct app_state;
+sidefx keymapping_call(struct keymapping* map, struct app_state* cfg);
 sidefx handle_cmd(char* cmd, struct app_state* cfg);
 
 #endif

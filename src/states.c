@@ -11,6 +11,7 @@ int init_tab(struct tab_state* out) {
 
     struct tab_state cfg = {
         .sort = FIELD_NAME,
+        .visual_sort = FIELD_NAME,
         .filters = 0,
         .display = {~0, 60, 20, 20},
         .list = NULL,

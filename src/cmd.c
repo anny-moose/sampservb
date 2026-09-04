@@ -28,6 +28,12 @@ struct regcmd {
 static const struct regcmd* commands;
 static const size_t cmd_count;
 
+struct keymapping {
+    sidefx (*call)(const char**, void*);
+    uint8_t lvl;
+    char* argv[];
+};
+
 #define CMD_TOKS 3
 #if CMD_TOKS <= 1 || CMD_TOKS == SIZE_MAX
 #error Definition of CMD_TOKS falls out of the valid range [2, SIZE_MAX)
@@ -66,15 +72,8 @@ static sidefx call_quit(const char** argv, void* cfg_) {
 
 static sidefx call_echo(const char** argv, void* cfg_) {
     (void)cfg_;
-    char buf[64] = {0};
 
-    const char** curs = argv + 1;
-    while (*curs != NULL) {
-        strcat(buf, *curs);
-        curs++;
-    }
-
-    notify(buf);
+    notify("%s", argv[1]);
     return 0;
 }
 
@@ -260,8 +259,6 @@ static void set_filter(void* target, const char* setting, const void* params) {
             "password",
             setting);
     }
-
-    // sort_serverlist(, cfg.sort, *filter, buf);
 }
 
 static void set_sort(void* target, const char* setting, const void* params) {
@@ -592,6 +589,138 @@ static sidefx call_tabmove(const char** argv, void* cfg_) {
     return REFRESH_TAB | REFRESH_LIST;
 }
 
+static sidefx call_move(const char** argv, void* cfg_) {
+    struct tab_state* tab = cfg_;
+
+    if (tab->list == NULL) return 0;
+
+    int change = 1;
+    if (argv[1] != NULL) change = abs(atoi(argv[1]));
+
+    if (strcmp(argv[0], "next") == 0) {
+        tab->selected =
+            MIN(tab->list->num_displayed - 1, tab->selected + change);
+    } else {
+        if ((size_t)change > tab->selected)
+            tab->selected = 0;
+        else
+            tab->selected -= change;
+    }
+
+    return REFRESH_LIST;
+}
+
+static sidefx call_sortmove(const char** argv, void* cfg_) {
+    struct tab_state* tab = cfg_;
+
+    if (strcmp(argv[0], "sortnext") == 0) {
+        if ((tab->visual_sort & 0x10) == 0) tab->visual_sort <<= 1;
+    } else {
+        if ((tab->visual_sort & 0x1) == 0) tab->visual_sort >>= 1;
+    }
+
+    return 0;
+}
+
+static sidefx call_sort(const char** argv, void* cfg_) {
+    struct tab_state* tab = cfg_;
+    (void)argv;
+
+    if (tab->sort == tab->visual_sort)
+        tab->sort |= (int8_t)INT8_MIN;
+    else
+        tab->sort = tab->visual_sort;
+
+    return REFRESH_SORT | REFRESH_LIST;
+}
+
+static sidefx call_remap(const char** argv, void* cfg_) {
+    struct app_state* cfg = cfg_;
+
+    size_t idx;
+
+    if (argv[1] == NULL) {
+        notify("Must specify a key to map to.");
+        return 0;
+    }
+
+    if (*argv[1] == '\0') {
+        idx = ' ' - 32;
+    } else if (argv[1][1] != '\0') {
+        if (strcmp(argv[1], "<CR>") == 0) {
+            idx = ':' - 32;
+        } else if (strcmp(argv[1], "<Tab>") == 0) {
+            idx = '/' - 32;
+        } else {
+            notify("Must specify a key to map to, or <CR>/<Tab>");
+            return 0;
+        }
+    } else {
+        if (*argv[1] < 32 || *argv[1] > 127 || *argv[1] == ':' ||
+            *argv[1] == '\\') {
+            notify("Can't map to this key");
+            return 0;
+        }
+
+        idx = *argv[1] - 32;
+    }
+
+    if (argv[2] == NULL) {
+        free(cfg->keycmd[idx]);
+        cfg->keycmd[idx] = NULL;
+        return 0;
+    }
+
+    size_t alloc_size = sizeof(struct keymapping);
+    size_t argc = 0;
+    uint8_t lvl = 0;
+    sidefx (*func)(const char**, void*) = NULL;
+
+    for (size_t i = 0; i < cmd_count; i++) {
+        if (strcmp(argv[2], commands[i].cmd) == 0) {
+            argc = commands[i].expected_args;
+            func = commands[i].call;
+            lvl = commands[i].lvl;
+            break;
+        }
+    }
+
+    if (func == NULL) {
+        notify("Couldn't find function: %s", argv[2]);
+        return 0;
+    }
+
+    if (argc != 0) {
+        alloc_size += sizeof(char*) * argc;
+        alloc_size += strlen(argv[2]) + 1;
+        if (argv[3] != NULL) {
+            alloc_size += strlen(argv[3]) + 1;
+        }
+    }
+
+    struct keymapping* newmap = calloc(1, alloc_size);
+    if (newmap == NULL) {
+        notify("Failed to allocate!");
+        return 0;
+    }
+
+    newmap->call = func;
+    newmap->lvl = lvl;
+    if (argc != 0) {
+        char* args = stpcpy((char*)(newmap->argv + argc), argv[2]) + 1;
+        newmap->argv[0] = (char*)(newmap->argv + argc);
+        if (argv[3] != NULL) {
+            stpcpy(args, argv[3]);
+            parse_toks(args, newmap->argv + 1, argc - 1);
+        }
+    }
+
+    free(cfg->keycmd[idx]);
+    cfg->keycmd[idx] = newmap;
+
+    return 0;
+}
+
 #define LVL_APPLICATION 1
 #define LVL_TAB 0
 
@@ -655,6 +784,37 @@ static const struct regcmd cmd_arr[] = {
         .expected_args = 2,
         .lvl = LVL_APPLICATION,
     },
+    {
+        .cmd = "next",
+        .call = call_move,
+        .expected_args = 2,
+    },
+    {
+        .cmd = "prev",
+        .call = call_move,
+        .expected_args = 2,
+    },
+    {
+        .cmd = "sortnext",
+        .call = call_sortmove,
+        .expected_args = 2,
+    },
+    {
+        .cmd = "sortprev",
+        .call = call_sortmove,
+        .expected_args = 2,
+    },
+    {
+        .cmd = "map",
+        .call = call_remap,
+        .expected_args = 4,
+        .lvl = LVL_APPLICATION,
+    },
+    {
+        .cmd = "sort",
+        .call = call_sort,
+        .expected_args = 0,
+    },
 };
 static const struct regcmd* commands = cmd_arr;
 static const size_t cmd_count = sizeof(cmd_arr) / sizeof(cmd_arr[0]);
@@ -693,4 +853,22 @@ sidefx handle_cmd(char* cmd, struct app_state* cfg) {
     }
 
     return 0;
+}
+
+sidefx keymapping_call(struct keymapping* map, struct app_state* cfg) {
+    if (map == NULL) return 0;
+
+    void* arg;
+    switch (map->lvl) {
+        case LVL_TAB:
+            arg = cfg->tabs + cfg->tabs_selected;
+            break;
+        case LVL_APPLICATION:
+            arg = cfg;
+            break;
+        default:
+            arg = NULL;
+    }
+
+    return map->call((const char**)map->argv, arg);
 }

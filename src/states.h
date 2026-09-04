@@ -4,6 +4,8 @@
 #include <curses.h>
 #include <unistd.h>
 
+#include "cmd.h"
+
 #define FIELD_PR 0x1
 #define FIELD_NAME 0x2
 #define FIELD_PC 0x4
@@ -26,6 +28,7 @@ struct tab_state {
     char* exec_cmd;
     uint8_t filters;
     int8_t sort;
+    int8_t visual_sort;
     size_t selected;
     struct display_cfg display;
     struct servlist* list;
@@ -39,6 +42,9 @@ struct tab_state {
 struct app_state {
     bool quit;
     pid_t game_proc;
+
+    /* 95 printable ascii characters, : and / will be used for \n and \t */
+    struct keymapping* keycmd[95];
 
     size_t tabs_selected;
     struct tab_state* tabs;
