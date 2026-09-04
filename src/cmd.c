@@ -14,8 +14,47 @@
 #include "common.h"
 #include "serv.h"
 #include "servfetch.h"
+#include "states.h"
 
 extern char** environ;
+
+struct regcmd {
+    const char* cmd;
+    sidefx (*call)(const char**, void*);
+    size_t expected_args;
+    uint8_t lvl;
+};
+
+static const struct regcmd* commands;
+static const size_t cmd_count;
+
+#define CMD_TOKS 3
+#if CMD_TOKS <= 1 || CMD_TOKS == SIZE_MAX
+#error Definition of CMD_TOKS falls out of the valid range [2, SIZE_MAX)
+#endif
+static size_t parse_toks(char* input, char** output, size_t ntoks) {
+    if (ntoks < 1 || input == NULL) return 0;
+
+    size_t parsed_toks = 0;
+
+    char* curr_tok = input;
+    char* cursor = input;
+    do {
+        output[parsed_toks] = curr_tok;
+
+        while (*cursor != '\0') {
+            if (*cursor == ' ' && parsed_toks < ntoks - 1) {
+                *cursor = '\0';
+                curr_tok = ++cursor;
+                break;
+            }
+            cursor++;
+        }
+        if (curr_tok == output[parsed_toks++]) break;
+    } while (parsed_toks < ntoks);
+
+    return parsed_toks;
+}
 
 static sidefx call_quit(const char** argv, void* cfg_) {
     (void)argv;
@@ -556,12 +595,7 @@ static sidefx call_tabmove(const char** argv, void* cfg_) {
 #define LVL_APPLICATION 1
 #define LVL_TAB 0
 
-static const struct regcmd {
-    const char* cmd;
-    sidefx (*call)(const char**, void*);
-    size_t expected_args;
-    uint8_t lvl;
-} commands[] = {
+static const struct regcmd cmd_arr[] = {
     {
         .cmd = "q",
         .call = call_quit,
@@ -622,44 +656,25 @@ static const struct regcmd {
         .lvl = LVL_APPLICATION,
     },
 };
+static const struct regcmd* commands = cmd_arr;
+static const size_t cmd_count = sizeof(cmd_arr) / sizeof(cmd_arr[0]);
 
-#define CMD_TOKS 3
-#if CMD_TOKS <= 1 || CMD_TOKS == SIZE_MAX
-#error Definition of CMD_TOKS falls out of the valid range [2, SIZE_MAX)
-#endif
 sidefx handle_cmd(char* cmd, struct app_state* cfg) {
     if (cmd == NULL || cfg == NULL) return 0;
 
     char* toks[CMD_TOKS + 1] = {0};
-    size_t parsed_toks = 0;
+    size_t parsed_toks = parse_toks(cmd, toks, 2);
+    if (parsed_toks < 1) return 0;
 
-    char* curr_tok = cmd;
-    char* cursor = cmd;
-    do {
-        toks[parsed_toks] = curr_tok;
-
-        while (*cursor != '\0') {
-            if (*cursor == ' ' && parsed_toks < CMD_TOKS - 1) {
-                *cursor = '\0';
-                curr_tok = ++cursor;
-                break;
-            }
-            cursor++;
-        }
-        if (curr_tok == toks[parsed_toks++]) break;
-    } while (parsed_toks < CMD_TOKS);
-
-    for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); i++) {
+    for (size_t i = 0; i < cmd_count; i++) {
         if (strcmp(toks[0], commands[i].cmd) == 0) {
-            /* concatenate excess tokens */
-            if (parsed_toks > commands[i].expected_args &&
-                commands[i].expected_args > 1) {
-                for (size_t toki = commands[i].expected_args - 1;
-                     toki < parsed_toks - 1; toki++) {
-                    toks[toki][strlen(toks[toki])] = ' ';
-                }
-                toks[commands[i].expected_args] = NULL;
+            if (commands[i].expected_args > CMD_TOKS + 1) {
+                abort();
+                return 0;
             }
+
+            parsed_toks +=
+                parse_toks(toks[1], toks + 1, commands[i].expected_args);
 
             void* arg;
             switch (commands[i].lvl) {
