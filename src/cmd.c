@@ -3,7 +3,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <inttypes.h>
-#include <linux/limits.h>
+#include <limits.h>
 #include <netdb.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -116,7 +116,8 @@ static sidefx call_connect(const char** argv, void* cfg_) {
 
     const struct addrinfo hints = {
         .ai_family = AF_INET,
-        .ai_protocol = SOCK_DGRAM,
+        .ai_protocol = IPPROTO_UDP,
+        .ai_socktype = SOCK_DGRAM,
     };
 
     struct addrinfo* resp;
@@ -493,7 +494,8 @@ static sidefx call_add(const char** argv, void* cfg_) {
 
     const struct addrinfo hints = {
         .ai_family = AF_INET,
-        .ai_protocol = SOCK_DGRAM,
+        .ai_protocol = IPPROTO_UDP,
+        .ai_socktype = SOCK_DGRAM,
     };
 
     struct addrinfo* resp;

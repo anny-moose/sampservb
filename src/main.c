@@ -1,4 +1,5 @@
 
+#define NCURSES_WIDECHAR 1
 #include <arpa/inet.h>
 #include <cjson/cJSON.h>
 #include <curl/curl.h>

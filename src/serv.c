@@ -36,8 +36,6 @@ static int servcmp(const void* s1_, const void* s2_) {
             ret = 1;
         else
             ret = -1;
-    } else if (cmp_field & FIELD_NAME) {
-        ret = strcmp(s1_txt + s1->hn_off, s2_txt + s2->hn_off);
     } else if (cmp_field & FIELD_PC) {
         if (s1->pc == s2->pc)
             ret = 0;
@@ -45,6 +43,10 @@ static int servcmp(const void* s1_, const void* s2_) {
             ret = 1;
         else
             ret = -1;
+    } else if (s1_txt == NULL || s2_txt == NULL) {
+        ret = 0;
+    } else if (cmp_field & FIELD_NAME) {
+        ret = strcmp(s1_txt + s1->hn_off, s2_txt + s2->hn_off);
     } else if (cmp_field & FIELD_GM) {
         ret = strcmp(s1_txt + s1->gm_off, s2_txt + s2->gm_off);
     } else if (cmp_field & FIELD_LN) {
@@ -70,6 +72,8 @@ int servlist_resize(struct servlist** servers, size_t new_cap) {
     return 0;
 }
 
+/* on non-glibc platforms this swaps the first and last elements when every
+ * element is equal according to the sort function */
 int sort_serverlist(struct servlist* servers, int8_t sort_field,
                     uint8_t filters, char* query) {
     if (servers == NULL) return -1;
@@ -82,7 +86,7 @@ int sort_serverlist(struct servlist* servers, int8_t sort_field,
         if ((servers->servs[i].pa && filters & HIDE_PR) ||
             (servers->servs[i].pc == 0 && filters & HIDE_EMPTY) ||
             (servers->servs[i].pc == servers->servs[i].pm && filters & HIDE_FULL) ||
-            (query != NULL && strstr(txt + servers->servs[i].hn_off, query) == NULL)) {
+            (txt != NULL && query != NULL && strstr(txt + servers->servs[i].hn_off, query) == NULL)) {
             // clang-format on
             servlist_hide(servers, i);
         } else {
