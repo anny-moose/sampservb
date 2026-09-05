@@ -84,6 +84,25 @@ int draw_frame(WINDOW* win, struct display_cfg cfg, int8_t field) {
     return 0;
 }
 
+int draw_tablist(WINDOW* win, const struct tab_state* tabs, size_t count,
+                 size_t selected) {
+    if (win == NULL || tabs == NULL) return -1;
+    wmove(win, 0, 0);
+    wclrtoeol(win);
+
+    for (size_t i = 0; i < count; i++) {
+        if (i > 0) {
+            waddch(win, ' ');
+            waddch(win, ' ');
+        }
+        if (selected == i) wattron(win, COLOR_PAIR(SEL_PAIR));
+        wprintw(win, "%zu:%s", i + 1, tabs[i].tab_name);
+        if (selected == i) wattroff(win, COLOR_PAIR(SEL_PAIR));
+    }
+
+    return 0;
+}
+
 int draw_serverlist(WINDOW* win, const struct servlist* servers,
                     struct display_cfg cfg, size_t selected) {
     if (win == NULL) return -1;
@@ -191,6 +210,7 @@ int main(void) {
 
     WINDOW* status = newwin(LINES - 1 - 2, COLS, 1, 0);
     WINDOW* sortwin = newwin(1, COLS, 0, 0);
+    WINDOW* tabwin = newwin(1, COLS, LINES - 1, 0);
 
     servquery_init();
 
@@ -246,7 +266,12 @@ int main(void) {
             fx = keymapping_call(state.keycmd[idx], &state);
         }
 
-        if (fx & REFRESH_TAB) tab = state.tabs + state.tabs_selected;
+        if (fx & REFRESH_TAB) {
+            tab = state.tabs + state.tabs_selected;
+            draw_tablist(tabwin, state.tabs, state.tabs_count,
+                         state.tabs_selected);
+            wrefresh(tabwin);
+        }
         if (fx & REFRESH_SORT)
             sort_serverlist(tab->list, tab->sort, tab->filters,
                             tab->search_buf);
@@ -267,6 +292,7 @@ int main(void) {
     for (size_t i = 0; i < sizeof(state.keycmd) / sizeof(state.keycmd[0]); i++)
         free(state.keycmd[i]);
 
+    delwin(tabwin);
     delwin(status);
     delwin(sortwin);
     endwin();

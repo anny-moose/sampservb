@@ -302,11 +302,23 @@ const static struct set_bounds uname = {
     .upper.usize = 24,
 };
 
+const static struct set_bounds tabname = {
+    .lower.usize = 0,
+    .upper.usize = TABNAME_LEN - 1,
+};
+
 const static struct setmap maps[] = {
     {
         .name = "exec_cmd",
         .offset = offsetof(struct tab_state, exec_cmd),
         .setfunc = set_charp,
+    },
+    {
+        .name = "tabname",
+        .offset = offsetof(struct tab_state, tab_name),
+        .setfunc = set_fixedstr,
+        .fx = REFRESH_TAB,
+        .params = &tabname,
     },
     {
         .name = "username",
@@ -569,6 +581,9 @@ static sidefx call_tabnew(const char** argv, void* cfg_) {
     cfg->tabs_selected = cfg->tabs_count;
     cfg->tabs_count++;
 
+    snprintf(cfg->tabs[cfg->tabs_selected].tab_name, TABNAME_LEN, "Tab %zu",
+             cfg->tabs_count);
+
     return REFRESH_TAB | REFRESH_LIST;
 }
 
@@ -723,6 +738,24 @@ static sidefx call_remap(const char** argv, void* cfg_) {
     return 0;
 }
 
+static sidefx call_tab(const char** argv, void* cfg_) {
+    struct app_state* cfg = cfg_;
+
+    if (argv[1] == NULL) {
+        return 0;
+    }
+
+    int tab = atoi(argv[1]) - 1;
+    if (tab < 0 || (size_t)tab >= cfg->tabs_count) {
+        notify("Invalid tab specified. Must be a number between 1 and %zu",
+               cfg->tabs_count);
+        return 0;
+    }
+
+    cfg->tabs_selected = tab;
+    return REFRESH_TAB | REFRESH_LIST;
+}
+
 #define LVL_APPLICATION 1
 #define LVL_TAB 0
 
@@ -749,8 +782,6 @@ static const struct regcmd cmd_arr[] = {
         .cmd = "set",
         .call = call_set,
         .expected_args = 3,
-        /* .lvl = LVL_APPLICATION */ /* will probably be required unless i
-                                        figure out something better. */
     },
     {
         .cmd = "so",
@@ -783,6 +814,12 @@ static const struct regcmd cmd_arr[] = {
     {
         .cmd = "tabprev",
         .call = call_tabmove,
+        .expected_args = 2,
+        .lvl = LVL_APPLICATION,
+    },
+    {
+        .cmd = "tab",
+        .call = call_tab,
         .expected_args = 2,
         .lvl = LVL_APPLICATION,
     },

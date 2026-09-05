@@ -23,7 +23,9 @@ struct display_cfg {
 #define HIDE_EMPTY 0x2
 #define HIDE_FULL 0x4
 
+#define TABNAME_LEN 25
 struct tab_state {
+    char tab_name[TABNAME_LEN];
     char username[25];
     char* exec_cmd;
     uint8_t filters;
