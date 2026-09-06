@@ -557,6 +557,33 @@ static sidefx call_add(const char** argv, void* cfg_) {
     return REFRESH_SORT | REFRESH_LIST;
 }
 
+static sidefx call_refetch(const char** argv, void* cfg_) {
+    (void)argv;
+    struct tab_state* tab = cfg_;
+
+    if (tab->list == NULL || tab->selected >= tab->list->num_displayed) {
+        notify("Select a server to refresh");
+        return 0;
+    }
+
+    struct servinfo* serv = tab->list->servs + tab->selected;
+
+    struct sockaddr_in addr = (struct sockaddr_in){
+        .sin_family = AF_INET,
+        .sin_addr = serv->ip,
+        .sin_port = serv->port,
+    };
+
+    free(serv->txt);
+    int ret = servquery_info(addr, serv);
+    if (ret < 0) {
+        notify("Failed to query server: %d", ret);
+        return 0;
+    }
+
+    return REFRESH_LIST;
+}
+
 static sidefx call_tabnew(const char** argv, void* cfg_) {
     struct app_state* cfg = cfg_;
     (void)argv;
@@ -793,6 +820,11 @@ static const struct regcmd cmd_arr[] = {
         .cmd = "fetch",
         .call = call_fetch,
         .expected_args = 3,
+    },
+    {
+        .cmd = "refetch",
+        .call = call_refetch,
+        .expected_args = 0,
     },
     {
         .cmd = "add",
