@@ -20,69 +20,10 @@
 
 #include "cmd.h"
 #include "common.h"
+#include "list.h"
 #include "serv.h"
 #include "servfetch.h"
 #include "states.h"
-
-#define SUCC_PAIR 1
-#define FAIL_PAIR 2
-#define SEL_PAIR 3
-
-#define TEST_FIELD_OPEN(bit)                                   \
-    do {                                                       \
-        if (field & (bit)) wattron(win, COLOR_PAIR(SEL_PAIR)); \
-        if (cfg.shown_fields & (bit) && ok != ERR)
-
-#define TEST_FIELD_CLOSE(bit)                               \
-    if (field & (bit)) wattroff(win, COLOR_PAIR(SEL_PAIR)); \
-    }                                                       \
-    while (0)
-
-int draw_frame(WINDOW* win, struct display_cfg cfg, int8_t field) {
-    int maxy, maxx, y, x;
-    (void)(maxy);
-    getmaxyx(win, maxy, maxx);
-    y = 0;
-    x = 0;
-    wclear(win);
-    wmove(win, 0, 0);
-
-    int ok = OK;
-    TEST_FIELD_OPEN(FIELD_PR) {
-        waddch(win, 'P');
-        x += 4;
-        ok = wmove(win, y, x);
-    }
-    TEST_FIELD_CLOSE(FIELD_PR);
-    TEST_FIELD_OPEN(FIELD_NAME) {
-        waddstr(win, "Name");
-        x += cfg.name_cols + 2;
-        ok = wmove(win, y, x);
-    }
-    TEST_FIELD_CLOSE(FIELD_NAME);
-    TEST_FIELD_OPEN(FIELD_PC) {
-        waddstr(win, "Players");
-        x += 11;
-        ok = wmove(win, y, x);
-    }
-    TEST_FIELD_CLOSE(FIELD_PC);
-    TEST_FIELD_OPEN(FIELD_GM) {
-        waddstr(win, "Gamemode");
-        x += cfg.gm_cols + 2;
-        ok = wmove(win, y, x);
-    }
-    TEST_FIELD_CLOSE(FIELD_GM);
-    TEST_FIELD_OPEN(FIELD_LN) {
-        waddstr(win, "Language");
-        x += cfg.ln_cols + 2;
-        ok = wmove(win, y, x);
-    }
-    TEST_FIELD_CLOSE(FIELD_LN);
-
-    wrefresh(win);
-
-    return 0;
-}
 
 int draw_tablist(WINDOW* win, const struct tab_state* tabs, size_t count,
                  size_t selected) {
@@ -103,71 +44,64 @@ int draw_tablist(WINDOW* win, const struct tab_state* tabs, size_t count,
     return 0;
 }
 
-int draw_serverlist(WINDOW* win, const struct servlist* servers,
-                    struct display_cfg cfg, size_t selected) {
-    if (win == NULL) return -1;
-    if (servers == NULL) {
-        wclear(win);
-        return -1;
-    }
-    static size_t beginning = 0;
-    if (beginning > selected) beginning = selected;
+void writestr_serv(WINDOW* win, const void* data, unsigned char col,
+                   size_t elem, int xleft, void* userdata) {
+    struct servlist* list = userdata;
+    if (list == NULL) return;
+    const struct servinfo* entry = data;
+    entry += elem;
 
-    int maxy, maxx, y, x;
-    getmaxyx(win, maxy, maxx);
-    y = 0;
-    x = 0;
-    wmove(win, 0, 0);
+    short colattr = 0;
+    wattr_get(win, NULL, &colattr, NULL);
 
-    if (selected - beginning >= (unsigned)maxy) beginning = selected - maxy + 1;
+    const char* txt = entry->txt == NULL ? list->txt : entry->txt;
 
-    for (y = 0; y < maxy; y++) {
-        x = 0;
-        wmove(win, y, x);
-        wclrtoeol(win);
+    char buf[10];
 
-        size_t i = beginning + y;
-        if (i >= servers->num_displayed) continue;
-
-        const char* txt = servers->servs[i].txt == NULL ? servers->txt
-                                                        : servers->servs[i].txt;
-
-        int ok = OK;
-        if (cfg.shown_fields & FIELD_PR && ok != ERR) {
-            short col = servers->servs[i].pa ? FAIL_PAIR : SUCC_PAIR;
-
-            wattron(win, COLOR_PAIR(col));
-            waddwstr(win, servers->servs[i].pa ? L"🔒" : L"🔓");
-            wattroff(win, COLOR_PAIR(col));
-            x += 4;
-            ok = wmove(win, y, x);
-        }
-        if (selected == i) wattron(win, COLOR_PAIR(SEL_PAIR));
-        if (cfg.shown_fields & FIELD_NAME && ok != ERR) {
-            waddnstr(win, txt + servers->servs[i].hn_off, cfg.name_cols);
-            x += cfg.name_cols + 2;
-            ok = wmove(win, y, x);
-        }
-        if (cfg.shown_fields & FIELD_PC && ok != ERR) {
-            wprintw(win, "%4" PRIu16 "/%-4." PRIu16, servers->servs[i].pc,
-                    servers->servs[i].pm);
-            x += 11;
-            ok = wmove(win, y, x);
-        }
-        if (cfg.shown_fields & FIELD_GM && ok != ERR) {
-            waddnstr(win, txt + servers->servs[i].gm_off, cfg.gm_cols);
-            x += cfg.gm_cols + 2;
-            ok = wmove(win, y, x);
-        }
-        if (cfg.shown_fields & FIELD_LN && ok != ERR) {
-            waddnstr(win, txt + servers->servs[i].ln_off, cfg.ln_cols);
-            x += cfg.ln_cols + 2;
-            ok = wmove(win, y, x);
-        }
-        if (selected == i) wattroff(win, COLOR_PAIR(SEL_PAIR));
+    switch (col) {
+        case 0:
+            wcolor_set(win, entry->pa ? FAIL_PAIR : SUCC_PAIR, NULL);
+            waddnwstr(win, entry->pa ? L"🔒" : L"🔓", xleft);
+            break;
+        case 1:
+            waddnstr(win, txt + entry->hn_off, xleft);
+            break;
+        case 2:
+            snprintf(buf, sizeof(buf), "%4" PRIu16 "/%-4." PRIu16, entry->pc,
+                     entry->pm);
+            waddnstr(win, buf, xleft);
+            break;
+        case 3:
+            waddnstr(win, txt + entry->gm_off, xleft);
+            break;
+        case 4:
+            waddnstr(win, txt + entry->ln_off, xleft);
+            break;
+        default:
+            break;
     }
 
-    return 0;
+    wcolor_set(win, colattr, NULL);
+}
+
+unsigned char upd_listdesc(struct tab_state* tab, struct listdesc* ldesc) {
+    ldesc->userdata = tab->list;
+
+    ldesc->cols[0].width = tab->display.shown_fields & FIELD_PR ? 2 : 0;
+    ldesc->cols[1].width =
+        tab->display.shown_fields & FIELD_NAME ? tab->display.name_cols : 0;
+    ldesc->cols[2].width = tab->display.shown_fields & FIELD_PC ? 9 : 0;
+    ldesc->cols[3].width =
+        tab->display.shown_fields & FIELD_GM ? tab->display.gm_cols : 0;
+    ldesc->cols[4].width =
+        tab->display.shown_fields & FIELD_LN ? tab->display.ln_cols : 0;
+
+    unsigned char selcol = 0;
+    int8_t currsort = tab->visual_sort;
+
+    while ((currsort >>= 1) != 0) selcol++;
+
+    return selcol;
 }
 
 void sigchld_handler(int sig) {
@@ -208,8 +142,7 @@ int main(void) {
 
     refresh();
 
-    WINDOW* status = newwin(LINES - 1 - 2, COLS, 1, 0);
-    WINDOW* sortwin = newwin(1, COLS, 0, 0);
+    WINDOW* listwin = newwin(LINES - 2, COLS, 0, 0);
     WINDOW* tabwin = newwin(1, COLS, LINES - 1, 0);
 
     servquery_init();
@@ -219,15 +152,32 @@ int main(void) {
         .tabs = t,
         .tabs_count = 1,
         .tabs_capacity = 1,
-        .servlist_win = status,
+        .servlist_win = listwin,
     };
 
     init_tab(state.tabs);
     struct tab_state* tab = state.tabs + state.tabs_selected;
 
-    draw_serverlist(status, tab->list, tab->display, 0);
-    wrefresh(status);
-    draw_frame(sortwin, tab->display, 0);
+    struct coldesc cols[5] = {
+        {"Password", 2},
+        {"Name", state.tabs->display.name_cols},
+        {"Players", 9},
+        {"Gamemode", state.tabs->display.gm_cols},
+        {"Language", state.tabs->display.ln_cols},
+    };
+
+    struct listdesc listd = {
+        .display_name = "Servers",
+        .ncols = 5,
+        .cols = cols,
+        .writestr = writestr_serv,
+        .opt = LIST_OPT_SHOWSEL | LIST_OPT_SHOWSELCOL,
+    };
+
+    listd.userdata = NULL;
+    draw_list(listwin, &listd, NULL, 0, tab->selected,
+              upd_listdesc(tab, &listd));
+    wrefresh(listwin);
 
     char buf[64] = {0};
     sidefx fx;
@@ -276,11 +226,12 @@ int main(void) {
             sort_serverlist(tab->list, tab->sort, tab->filters,
                             tab->search_buf);
         if (fx & REFRESH_LIST) {
-            draw_serverlist(status, tab->list, tab->display, tab->selected);
-            wrefresh(status);
+            draw_list(listwin, &listd, tab->list->servs,
+                      tab->list->num_displayed, tab->selected,
+                      upd_listdesc(tab, &listd));
+            wrefresh(listwin);
         }
 
-        draw_frame(sortwin, tab->display, tab->visual_sort);
         fx = 0;
     }
 
@@ -293,8 +244,7 @@ int main(void) {
         free(state.keycmd[i]);
 
     delwin(tabwin);
-    delwin(status);
-    delwin(sortwin);
+    delwin(listwin);
     endwin();
 
     return EXIT_SUCCESS;

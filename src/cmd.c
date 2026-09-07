@@ -657,13 +657,25 @@ static sidefx call_move(const char** argv, void* cfg_) {
 static sidefx call_sortmove(const char** argv, void* cfg_) {
     struct tab_state* tab = cfg_;
 
+    const uint8_t shown = tab->display.shown_fields;
+    uint8_t sort = tab->visual_sort;
+
     if (strcmp(argv[0], "sortnext") == 0) {
-        if ((tab->visual_sort & 0x10) == 0) tab->visual_sort <<= 1;
+        while (sort != 0) {
+            sort <<= 1;
+            if ((sort & shown) && sort <= FIELD_LN) break;
+        }
     } else {
-        if ((tab->visual_sort & 0x1) == 0) tab->visual_sort >>= 1;
+        while (sort != 0) {
+            sort >>= 1;
+            if (sort & shown) break;
+        }
     }
 
-    return 0;
+    if (sort == 0) return 0;
+
+    tab->visual_sort = sort;
+    return REFRESH_LIST;
 }
 
 static sidefx call_sort(const char** argv, void* cfg_) {

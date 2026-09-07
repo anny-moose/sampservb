@@ -4,10 +4,10 @@ LFLAGS := $(shell pkg-config --libs libcurl ncursesw libcjson)
 
 .PHONY: clean
 
-build/out: build/main.o build/cmd.o build/common.o build/serv.o build/servfetch.o build/states.o
+build/out: build/main.o build/cmd.o build/common.o build/serv.o build/servfetch.o build/states.o build/list.o
 	${CC} ${CFLAGS} ${LFLAGS} $^ -o $@
 
-build/main.o: src/main.c src/cmd.h src/common.h src/serv.h src/servfetch.h src/states.h
+build/main.o: src/main.c src/cmd.h src/common.h src/serv.h src/servfetch.h src/states.h src/list.h
 	${CC} ${CFLAGS} $< -c -o $@
 	
 build/cmd.o: src/cmd.c src/cmd.h src/common.h src/serv.h src/servfetch.h src/states.h
@@ -23,6 +23,9 @@ build/servfetch.o: src/servfetch.c src/servfetch.h src/serv.h
 	${CC} ${CFLAGS} $< -c -o $@
 
 build/states.o: src/states.c src/states.h src/serv.h src/cmd.h
+	${CC} ${CFLAGS} $< -c -o $@
+
+build/list.o: src/list.c src/list.h
 	${CC} ${CFLAGS} $< -c -o $@
 
 clean:
