@@ -21,6 +21,15 @@ struct servinfo {
     char* txt;
 };
 
+struct servrules {
+    size_t len;
+    char* txt;
+    struct servrule {
+        size_t name_off;
+        size_t value_off;
+    } rules[];
+};
+
 struct servlist {
     size_t len;
     size_t cap;

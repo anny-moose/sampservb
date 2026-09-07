@@ -221,9 +221,9 @@ struct servlist* fetch_servers(const char* url, struct json_keys keys) {
     return list;
 }
 
-static int sockfd;
+static int sockfd = -1;
 int servquery_init(void) {
-    if (sockfd != 0) {
+    if (sockfd >= 0) {
         return 1;
     }
 
@@ -236,10 +236,11 @@ int servquery_init(void) {
 
 #define DGRAM_MAX 65535
 #define QUERY_LEN 11
-int servquery_info(struct sockaddr_in serv, struct servinfo* out) {
-    if (sockfd == 0) return -1;
+static int servquery_sendreq(const struct sockaddr_in serv, char opcode,
+                             unsigned char resp[DGRAM_MAX], size_t* exp,
+                             ssize_t* ret) {
+    if (sockfd < 0) return -1;
 
-    unsigned char resp[DGRAM_MAX];
     unsigned char req[QUERY_LEN];
 
     /* https://open.mp/docs/tutorials/QueryMechanism#serialized-data */
@@ -256,7 +257,21 @@ int servquery_info(struct sockaddr_in serv, struct servinfo* out) {
     req[9] = serv.sin_port >> 8;
     */
 
-    req[10] = 'i';
+    size_t lexp;
+    /* https://open.mp/docs/tutorials/QueryMechanism#response */
+    switch (opcode) {
+        case 'i':
+            lexp = QUERY_LEN +
+                   17; /* all non-variable-length fields sum up to 17. */
+            break;
+        case 'r':
+            lexp = QUERY_LEN + 2;
+            break;
+        default:
+            return -4;
+    }
+
+    req[10] = opcode;
 
     alarm(5);
     if (sendto(sockfd, req, QUERY_LEN, 0, (struct sockaddr*)&serv,
@@ -265,19 +280,27 @@ int servquery_info(struct sockaddr_in serv, struct servinfo* out) {
     alarm(0);
 
     alarm(5);
-    ssize_t ret;
-    if ((ret = recvfrom(sockfd, resp, DGRAM_MAX, 0, NULL, NULL)) < 0)
+    ssize_t lret;
+    if ((lret = recvfrom(sockfd, resp, DGRAM_MAX, 0, NULL, NULL)) < 0)
         return errno == EINTR ? -3 : -1;
     alarm(0);
 
-    /* https://open.mp/docs/tutorials/QueryMechanism#response */
-    size_t exp =
-        QUERY_LEN + 17; /* all non-variable-length fields sum up to 17. */
-
     /* safe cast because ret can't be < 0 */
-    if ((size_t)ret < exp) return -1;
-
+    if ((size_t)lret < lexp) return -1;
     if (memcmp(resp, req, QUERY_LEN) != 0) return -1;
+
+    *exp = lexp;
+    *ret = lret;
+
+    return 0;
+}
+
+int servquery_info(const struct sockaddr_in serv, struct servinfo* out) {
+    unsigned char resp[DGRAM_MAX];
+    size_t exp;
+    ssize_t ret;
+    int err = servquery_sendreq(serv, 'i', resp, &exp, &ret);
+    if (err < 0) return err;
 
     unsigned char* curs = resp + QUERY_LEN;
     struct servinfo info = {0};
@@ -332,13 +355,92 @@ int servquery_info(struct sockaddr_in serv, struct servinfo* out) {
     return 0;
 }
 
+int servquery_rules(const struct sockaddr_in serv, struct servrules** out) {
+    unsigned char resp[DGRAM_MAX];
+    size_t exp;
+    ssize_t ret;
+    int err = servquery_sendreq(serv, 'r', resp, &exp, &ret);
+    if (err < 0) return err;
+
+    unsigned char* cursor = resp + QUERY_LEN;
+    uint16_t rc;
+    memcpy(&rc, cursor, 2);
+    cursor += 2;
+
+    /* check to make sure that we are not overflowing exp by adding rc * 2 to
+     * it. (length of a rule and a value is described with a single byte) */
+    if ((SIZE_MAX - exp) / 2 < (size_t)rc) return -1;
+    exp += rc * 2;
+
+    if ((size_t)ret < exp) return -1;
+
+    /* unlike the info function, you can't keep track of the offsets without
+     * extra allocations/VLAs, so we just have to go over the list twice. */
+
+    unsigned char* tmp_cursor = cursor;
+    size_t buf_size = 0;
+    for (uint16_t i = 0; i < rc; i++) {
+        uint8_t len;
+
+        memcpy(&len, tmp_cursor, 1);
+        if (SIZE_MAX - exp < (size_t)len) return -1;
+        exp += len;
+        if ((size_t)ret < exp) return -1;
+        buf_size += (size_t)len + 1;
+        tmp_cursor += len + 1;
+
+        memcpy(&len, tmp_cursor, 1);
+        if (SIZE_MAX - exp < (size_t)len) return -1;
+        exp += len;
+        if ((size_t)ret < exp) return -1;
+        buf_size += (size_t)len + 1;
+        tmp_cursor += len + 1;
+    }
+
+    struct servrules* rules =
+        malloc(sizeof(struct servrules) + sizeof(struct servrule) * rc);
+    if (rules == NULL) return -1;
+    char* txt = malloc(buf_size);
+    if (txt == NULL) {
+        free(rules);
+        return -1;
+    }
+
+    rules->len = rc;
+    rules->txt = txt;
+
+    size_t buf_off = 0;
+    for (uint16_t i = 0; i < rc; i++) {
+        uint8_t len;
+
+        memcpy(&len, cursor, 1);
+        cursor++;
+        rules->rules[i].name_off = buf_off;
+        memcpy(txt + buf_off, cursor, len);
+        buf_off += len;
+        txt[buf_off++] = '\0';
+        cursor += len;
+
+        memcpy(&len, cursor, 1);
+        cursor++;
+        rules->rules[i].value_off = buf_off;
+        memcpy(txt + buf_off, cursor, len);
+        buf_off += len;
+        txt[buf_off++] = '\0';
+        cursor += len;
+    }
+
+    *out = rules;
+    return 0;
+}
+
 int servquery_destroy(void) {
-    if (sockfd == 0) return 1;
+    if (sockfd < 0) return 1;
 
     while (close(sockfd) < 0) {
         if (errno != EINTR) return -1;
     }
 
-    sockfd = 0;
+    sockfd = -1;
     return 0;
 }
