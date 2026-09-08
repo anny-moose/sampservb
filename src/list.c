@@ -9,7 +9,7 @@ void draw_list(WINDOW* win, struct listdesc* desc, const void* data,
                size_t num_elements, size_t sel, size_t selcol) {
     if (win == NULL || desc == NULL) return;
 
-    wclear(win);
+    werase(win);
 
     int maxy, maxx, y, x, minx;
     getmaxyx(win, maxy, maxx);
@@ -26,13 +26,14 @@ void draw_list(WINDOW* win, struct listdesc* desc, const void* data,
     wmove(win, 0, minx);
 
     if (desc->display_name != NULL) {
-        waddnstr(win, desc->display_name, maxy);
+        waddnstr(win, desc->display_name, maxx);
         y++;
         wmove(win, y, x);
     }
 
     int xleft;
     for (unsigned char col = 0; col < desc->ncols; col++) {
+        if (x >= maxx) break;
         xleft = maxx - x;
         struct coldesc* colp = desc->cols + col;
         int xinc = MIN(colp->width, xleft);
@@ -73,6 +74,7 @@ void draw_list(WINDOW* win, struct listdesc* desc, const void* data,
             wcolor_set(win, SEL_PAIR, NULL);
 
         for (unsigned char col = 0; col < desc->ncols; col++) {
+            if (x >= maxx) break;
             xleft = maxx - x;
             int xinc = MIN(desc->cols[col].width, xleft);
             if (xinc == 0) continue;

@@ -209,8 +209,6 @@ static void set_charp(void* target_, const char* setting, const void* params) {
     if (setting != NULL && *setting != '\0') *target = strdup(setting);
 }
 
-/* Temorarily commented out due to compiler warning */
-/*
 static void set_num(void* target, const char* setting, const void* params) {
     if (params == NULL || setting == NULL || target == NULL || *setting == '\0')
         return;
@@ -233,6 +231,7 @@ static void set_num(void* target, const char* setting, const void* params) {
 
     switch (cfg->num_type) {
         case SET_NUM_U8:
+            if (num < 0 || num > UINT8_MAX) return;
             *(uint8_t*)target = num;
             break;
         default:
@@ -240,7 +239,6 @@ static void set_num(void* target, const char* setting, const void* params) {
             return;
     }
 }
-*/
 
 static void set_filter(void* target, const char* setting, const void* params) {
     (void)params;
@@ -309,6 +307,15 @@ const static struct set_bounds tabname = {
     .upper.usize = TABNAME_LEN - 1,
 };
 
+const static struct set_num_params setu8_params = {
+    .bounds =
+        {
+            .lower.ilong = 0,
+            .upper.ilong = UINT8_MAX,
+        },
+    .num_type = SET_NUM_U8,
+};
+
 const static struct setmap maps[] = {
     {
         .name = "exec_cmd",
@@ -347,6 +354,30 @@ const static struct setmap maps[] = {
         .offset = offsetof(struct tab_state, sort),
         .setfunc = set_sort,
         .fx = REFRESH_SORT | REFRESH_LIST,
+    },
+    {
+        .name = "namecols",
+        .offset = offsetof(struct tab_state, display) +
+                  offsetof(struct display_cfg, name_cols),
+        .setfunc = set_num,
+        .params = &setu8_params,
+        .fx = REFRESH_LIST,
+    },
+    {
+        .name = "gmcols",
+        .offset = offsetof(struct tab_state, display) +
+                  offsetof(struct display_cfg, gm_cols),
+        .setfunc = set_num,
+        .params = &setu8_params,
+        .fx = REFRESH_LIST,
+    },
+    {
+        .name = "lncols",
+        .offset = offsetof(struct tab_state, display) +
+                  offsetof(struct display_cfg, ln_cols),
+        .setfunc = set_num,
+        .params = &setu8_params,
+        .fx = REFRESH_LIST,
     },
 };
 
@@ -873,6 +904,33 @@ static sidefx call_tab(const char** argv, void* cfg_) {
     return REFRESH_TAB | REFRESH_LIST;
 }
 
+static sidefx call_resize(const char** argv, void* cfg_) {
+    struct tab_state* tab = cfg_;
+
+    if (argv[1] == NULL) {
+        notify("Must specify change amount");
+        return 0;
+    }
+
+    uint8_t* col;
+    if (tab->visual_sort & FIELD_NAME) {
+        col = &tab->display.name_cols;
+    } else if (tab->visual_sort & FIELD_GM) {
+        col = &tab->display.gm_cols;
+    } else if (tab->visual_sort & FIELD_LN) {
+        col = &tab->display.ln_cols;
+    } else {
+        return 0;
+    }
+
+    int change = atoi(argv[1]);
+    change = MAX(MIN(UINT8_MAX - *col, change), -(*col) + 1);
+
+    *col += change;
+
+    return REFRESH_LIST;
+}
+
 #define LVL_APPLICATION 1
 #define LVL_TAB 0
 
@@ -980,6 +1038,11 @@ static const struct regcmd cmd_arr[] = {
         .cmd = "sort",
         .call = call_sort,
         .expected_args = 0,
+    },
+    {
+        .cmd = "resize",
+        .call = call_resize,
+        .expected_args = 2,
     },
 };
 static const struct regcmd* commands = cmd_arr;

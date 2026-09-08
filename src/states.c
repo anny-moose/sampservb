@@ -13,7 +13,8 @@ int init_tab(struct tab_state* out) {
         .sort = FIELD_NAME,
         .visual_sort = FIELD_NAME,
         .filters = 0,
-        .display = {~0, 60, 20, 20},
+        /* 19 preoccupied, 61 left */
+        .display = {~0, 40, 15, 11},
         .list = NULL,
     };
 

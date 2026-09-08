@@ -14,9 +14,9 @@
 
 struct display_cfg {
     uint8_t shown_fields;
-    uint16_t name_cols;
-    uint16_t gm_cols;
-    uint16_t ln_cols;
+    uint8_t name_cols;
+    uint8_t gm_cols;
+    uint8_t ln_cols;
 };
 
 #define HIDE_PR 0x1
