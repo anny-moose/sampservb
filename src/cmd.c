@@ -1,6 +1,7 @@
 #include "cmd.h"
 
 #include <arpa/inet.h>
+#include <curses.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -12,6 +13,7 @@
 #include <unistd.h>
 
 #include "common.h"
+#include "list.h"
 #include "serv.h"
 #include "servfetch.h"
 #include "states.h"
@@ -584,6 +586,82 @@ static sidefx call_refetch(const char** argv, void* cfg_) {
     return REFRESH_LIST;
 }
 
+static void writestr_rules(WINDOW* win, const void* data, unsigned char col,
+                           size_t elem, int xleft, void* userdata) {
+    struct servrules* list = userdata;
+    if (list == NULL) return;
+    const struct servrule* entry = data;
+    entry += elem;
+
+    switch (col) {
+        case 0:
+            waddnstr(win, list->txt + entry->name_off, xleft);
+            break;
+        case 1:
+            waddnstr(win, list->txt + entry->value_off, xleft);
+            break;
+        default:
+            break;
+    }
+}
+
+static sidefx call_rules(const char** argv, void* cfg_) {
+    (void)argv;
+    struct tab_state* tab = cfg_;
+
+    if (tab->list == NULL || tab->selected >= tab->list->num_displayed) {
+        notify("Select a server to refresh");
+        return 0;
+    }
+
+    struct servinfo* serv = tab->list->servs + tab->selected;
+
+    struct sockaddr_in addr = (struct sockaddr_in){
+        .sin_family = AF_INET,
+        .sin_addr = serv->ip,
+        .sin_port = serv->port,
+    };
+
+    struct servrules* rules;
+
+    int ret = servquery_rules(addr, &rules);
+    if (ret < 0) {
+        notify("Failed to query server: %d", ret);
+        return 0;
+    }
+
+    int winypos = LINES / 6;
+    int winxpos = COLS / 6;
+    int winheight = winypos * 4;
+    int winwidth = winxpos * 4;
+
+    struct coldesc cols[2] = {
+        {"Variable", winwidth / 2},
+        {"Value", winwidth / 2},
+    };
+
+    struct listdesc ldec = {
+        .ncols = 2,
+        .cols = cols,
+        .userdata = rules,
+        .writestr = writestr_rules,
+        .opt = LIST_OPT_BORDER,
+    };
+
+    WINDOW* notif = newwin(winheight, winwidth, winypos, winxpos);
+
+    draw_list(notif, &ldec, rules->rules, rules->len, 0, 0);
+    int a = wgetch(notif);
+    ungetch(a);
+
+    delwin(notif);
+
+    free(rules->txt);
+    free(rules);
+
+    return REFRESH_LIST;
+}
+
 static sidefx call_tabnew(const char** argv, void* cfg_) {
     struct app_state* cfg = cfg_;
     (void)argv;
@@ -836,6 +914,11 @@ static const struct regcmd cmd_arr[] = {
     {
         .cmd = "refetch",
         .call = call_refetch,
+        .expected_args = 0,
+    },
+    {
+        .cmd = "rules",
+        .call = call_rules,
         .expected_args = 0,
     },
     {
