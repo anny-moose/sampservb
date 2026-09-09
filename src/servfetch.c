@@ -264,6 +264,7 @@ static int servquery_sendreq(const struct sockaddr_in serv, char opcode,
             lexp = QUERY_LEN +
                    17; /* all non-variable-length fields sum up to 17. */
             break;
+        case 'c':
         case 'r':
             lexp = QUERY_LEN + 2;
             break;
@@ -431,6 +432,72 @@ int servquery_rules(const struct sockaddr_in serv, struct servrules** out) {
     }
 
     *out = rules;
+    return 0;
+}
+
+int servquery_clients(const struct sockaddr_in serv, struct servclients** out) {
+    unsigned char resp[DGRAM_MAX];
+    size_t exp;
+    ssize_t ret;
+    int err = servquery_sendreq(serv, 'c', resp, &exp, &ret);
+    if (err < 0) return err;
+
+    unsigned char* cursor = resp + QUERY_LEN;
+    uint16_t cc;
+    memcpy(&cc, cursor, 2);
+    cursor += 2;
+
+    /* at least 5 bytes per cc */
+    if ((SIZE_MAX - exp) / 5 < (size_t)cc) return -1;
+    exp += cc * 5;
+
+    if ((size_t)ret < exp) return -1;
+
+    unsigned char* tmp_cursor = cursor;
+    size_t buf_size = 0;
+    for (uint16_t i = 0; i < cc; i++) {
+        uint8_t len;
+
+        memcpy(&len, tmp_cursor, 1);
+        if (SIZE_MAX - exp < (size_t)len) return -1;
+        exp += len;
+        if ((size_t)ret < exp) return -1;
+        buf_size += (size_t)len + 1;
+        tmp_cursor += len + 1;
+
+        /* skip over the score, should be already accouned for */
+        tmp_cursor += 4;
+    }
+
+    struct servclients* clients =
+        malloc(sizeof(struct servclients) + sizeof(struct servclient) * cc);
+    if (clients == NULL) return -1;
+    char* txt = malloc(buf_size);
+    if (txt == NULL) {
+        free(clients);
+        return -1;
+    }
+
+    clients->len = cc;
+    clients->txt = txt;
+
+    size_t buf_off = 0;
+    for (uint16_t i = 0; i < cc; i++) {
+        uint8_t len;
+
+        memcpy(&len, cursor, 1);
+        cursor++;
+        clients->clients[i].name_off = buf_off;
+        memcpy(txt + buf_off, cursor, len);
+        buf_off += len;
+        txt[buf_off++] = '\0';
+        cursor += len;
+
+        memcpy(&clients->clients[i].score, cursor, 4);
+        cursor += 4;
+    }
+
+    *out = clients;
     return 0;
 }
 

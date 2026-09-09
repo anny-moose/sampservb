@@ -64,6 +64,17 @@ void draw_list(WINDOW* win, struct listdesc* desc, const void* data,
     }
     size_t i = desc->begin;
 
+    if (desc->opt & LIST_OPT_BORDER) {
+        if (i > 0) {
+            wmove(win, y, maxx);
+            waddch(win, '^');
+        }
+        if (i + (maxy - y) < num_elements) {
+            wmove(win, maxy - 1, maxx);
+            waddch(win, 'v');
+        }
+    }
+
     for (; y < maxy; y++) {
         x = minx;
         wmove(win, y, x);

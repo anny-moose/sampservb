@@ -30,6 +30,16 @@ struct servrules {
     } rules[];
 };
 
+struct servclients {
+    size_t len;
+    char* txt;
+    struct servclient {
+        size_t name_off;
+        uint32_t score; /* the wiki is unclear about the signed-ness of this
+                           field, it only states that it's 4 bytes long. */
+    } clients[];
+};
+
 struct servlist {
     size_t len;
     size_t cap;

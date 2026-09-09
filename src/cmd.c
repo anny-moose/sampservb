@@ -636,6 +636,44 @@ static void writestr_rules(WINDOW* win, const void* data, unsigned char col,
     }
 }
 
+static void popout_list(struct listdesc* desc, const void* data, size_t nels) {
+    int winypos = LINES / 6;
+    int winxpos = COLS / 6;
+    int winheight = winypos * 4;
+    int winwidth = winxpos * 4;
+
+    for (unsigned char col = 0; col < desc->ncols; col++) {
+        desc->cols[col].width = winwidth / desc->ncols;
+    }
+
+    size_t select = 0;
+    WINDOW* notif = newwin(winheight, winwidth, winypos, winxpos);
+
+    notify("Press Enter to close popup");
+    draw_list(notif, desc, data, nels, select, 0);
+
+    int a;
+    while ((a = wgetch(notif)) != '\n') {
+        switch (a) {
+            case 'j':
+                if (select + 1 < nels) select++;
+                break;
+            case 'k':
+                if (select > 0) select--;
+                break;
+            case ':':
+                delwin(notif);
+                ungetch(a);
+                return;
+            default:
+                break;
+        }
+        draw_list(notif, desc, data, nels, select, 0);
+    }
+
+    delwin(notif);
+}
+
 static sidefx call_rules(const char** argv, void* cfg_) {
     (void)argv;
     struct tab_state* tab = cfg_;
@@ -661,34 +699,92 @@ static sidefx call_rules(const char** argv, void* cfg_) {
         return 0;
     }
 
-    int winypos = LINES / 6;
-    int winxpos = COLS / 6;
-    int winheight = winypos * 4;
-    int winwidth = winxpos * 4;
-
     struct coldesc cols[2] = {
-        {"Variable", winwidth / 2},
-        {"Value", winwidth / 2},
+        {"Variable", 0},
+        {"Value", 0},
     };
 
-    struct listdesc ldec = {
+    struct listdesc ldesc = {
         .ncols = 2,
         .cols = cols,
         .userdata = rules,
         .writestr = writestr_rules,
-        .opt = LIST_OPT_BORDER,
+        .opt = LIST_OPT_BORDER | LIST_OPT_SELSCR,
     };
 
-    WINDOW* notif = newwin(winheight, winwidth, winypos, winxpos);
-
-    draw_list(notif, &ldec, rules->rules, rules->len, 0, 0);
-    int a = wgetch(notif);
-    ungetch(a);
-
-    delwin(notif);
+    popout_list(&ldesc, rules->rules, rules->len);
 
     free(rules->txt);
     free(rules);
+
+    return REFRESH_LIST;
+}
+
+static void writestr_clients(WINDOW* win, const void* data, unsigned char col,
+                             size_t elem, int xleft, void* userdata) {
+    struct servclients* list = userdata;
+    if (list == NULL) return;
+    const struct servclient* entry = data;
+    entry += elem;
+
+    /* ~4.2 billion max in a u32? */
+    char buf[11];
+
+    switch (col) {
+        case 0:
+            waddnstr(win, list->txt + entry->name_off, xleft);
+            break;
+        case 1:
+            snprintf(buf, sizeof(buf), "%" PRIu32, entry->score);
+            waddnstr(win, buf, xleft);
+            break;
+        default:
+            break;
+    }
+}
+
+static sidefx call_clients(const char** argv, void* cfg_) {
+    (void)argv;
+    struct tab_state* tab = cfg_;
+
+    if (tab->list == NULL || tab->selected >= tab->list->num_displayed) {
+        notify("Select a server to refresh");
+        return 0;
+    }
+
+    struct servinfo* serv = tab->list->servs + tab->selected;
+
+    struct sockaddr_in addr = (struct sockaddr_in){
+        .sin_family = AF_INET,
+        .sin_addr = serv->ip,
+        .sin_port = serv->port,
+    };
+
+    struct servclients* clients;
+
+    int ret = servquery_clients(addr, &clients);
+    if (ret < 0) {
+        notify("Failed to query server: %d", ret);
+        return 0;
+    }
+
+    struct coldesc cols[2] = {
+        {"Name", 0},
+        {"Score", 0},
+    };
+
+    struct listdesc ldesc = {
+        .ncols = 2,
+        .cols = cols,
+        .userdata = clients,
+        .writestr = writestr_clients,
+        .opt = LIST_OPT_BORDER | LIST_OPT_SELSCR,
+    };
+
+    popout_list(&ldesc, clients->clients, clients->len);
+
+    free(clients->txt);
+    free(clients);
 
     return REFRESH_LIST;
 }
@@ -977,6 +1073,11 @@ static const struct regcmd cmd_arr[] = {
     {
         .cmd = "rules",
         .call = call_rules,
+        .expected_args = 0,
+    },
+    {
+        .cmd = "clients",
+        .call = call_clients,
         .expected_args = 0,
     },
     {
