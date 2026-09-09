@@ -28,7 +28,8 @@ void draw_list(WINDOW* win, struct listdesc* desc, const void* data,
     if (desc->display_name != NULL) {
         waddnstr(win, desc->display_name, maxx);
         y++;
-        wmove(win, y, x);
+        x = minx;
+        wmove(win, y, minx);
     }
 
     int xleft;

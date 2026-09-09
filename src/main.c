@@ -226,9 +226,10 @@ int main(void) {
             sort_serverlist(tab->list, tab->sort, tab->filters,
                             tab->search_buf);
         if (fx & REFRESH_LIST) {
-            draw_list(listwin, &listd, tab->list->servs,
-                      tab->list->num_displayed, tab->selected,
-                      upd_listdesc(tab, &listd));
+            draw_list(listwin, &listd,
+                      tab->list == NULL ? NULL : tab->list->servs,
+                      tab->list == NULL ? 0 : tab->list->num_displayed,
+                      tab->selected, upd_listdesc(tab, &listd));
             wrefresh(listwin);
         }
 

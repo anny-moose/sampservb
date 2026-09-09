@@ -1163,8 +1163,10 @@ sidefx handle_cmd(char* cmd, struct app_state* cfg) {
                 return 0;
             }
 
-            parsed_toks +=
-                parse_toks(toks[1], toks + 1, commands[i].expected_args);
+            if (commands[i].expected_args > 1) {
+                parsed_toks += parse_toks(toks[1], toks + 1,
+                                          commands[i].expected_args - 1);
+            }
 
             void* arg;
             switch (commands[i].lvl) {
