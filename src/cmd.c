@@ -3,6 +3,7 @@
 #include <arpa/inet.h>
 #include <curses.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <netdb.h>
@@ -102,6 +103,7 @@ static sidefx call_connect(const char** argv, void* cfg_) {
 
     char ip[INET_ADDRSTRLEN];
     int portx;
+    struct servinfo serv;
 
     if (argv[1] == NULL) {
         if (tab->list == NULL || tab->selected >= tab->list->num_displayed) {
@@ -109,10 +111,10 @@ static sidefx call_connect(const char** argv, void* cfg_) {
             return 0;
         }
 
-        const struct servinfo* serv = tab->list->servs + tab->selected;
+        serv = tab->list->servs[tab->selected];
 
-        inet_ntop(AF_INET, &serv->ip, ip, INET_ADDRSTRLEN);
-        portx = ntohs(serv->port);
+        inet_ntop(AF_INET, &serv.ip, ip, INET_ADDRSTRLEN);
+        portx = ntohs(serv.port);
         goto launch;
     }
 
@@ -136,7 +138,7 @@ static sidefx call_connect(const char** argv, void* cfg_) {
     }
     struct sockaddr_in addr = *(struct sockaddr_in*)(resp->ai_addr);
     freeaddrinfo(resp);
-    inet_ntop(AF_INET, &addr.sin_addr, ip, 15);
+    inet_ntop(AF_INET, &addr.sin_addr, ip, INET_ADDRSTRLEN);
 
     if (argv[2] == NULL) {
         portx = 7777;
@@ -147,26 +149,94 @@ static sidefx call_connect(const char** argv, void* cfg_) {
             return 0;
         }
     }
+    addr.sin_port = htons((uint16_t)portx);
 
+    /* info is queried to check whether server is password-protected and prompt
+     * the user if so. */
+    ret = servquery_info(addr, &serv, true);
+    if (ret < 0) {
+        notify("Failed to query server info: %d", ret);
+        return 0;
+    }
+
+    char buf[64];
 launch:
+    if (serv.pa == true) {
+        getinput("Enter password: ", buf, sizeof(buf));
+    }
+
     child_spawned = 1;
     pid_t child = fork();
     if (child == 0) {
-        char* args;
-        asprintf(&args,
-                 "exec %s --name %s --host %s --port %" PRIu16
-                 " 2>&1 | cat >"
-                 "/dev/null",
-                 tab->exec_cmd, tab->username, ip, (uint16_t)portx);
+        char txtport[7];
+        int pipefd[2];
 
-        execve("/bin/sh",
-               (char*[]){
-                   "sh",
-                   "-c",
-                   args,
-                   NULL,
-               },
-               environ);
+        snprintf(txtport, sizeof(txtport), "%" PRIu16, (uint16_t)portx);
+
+        // clang-format off
+        char* cargv[10] = {
+            tab->exec_cmd,
+            "--name", tab->username,
+            "--host", ip,
+            "--port", txtport,
+            (serv.pa == true) ? "--password" : NULL, buf,
+            NULL,
+        };
+        // clang-format on
+
+        /* the pipe (and later grandchild) are used in order to keep track of
+         * the whole lineage of the game process. as windows doesn't have an
+         * execve-style interface, it is required in the case of e.g spawning
+         * another */
+        if (pipe(pipefd) < 0) {
+            exit(EXIT_FAILURE);
+        }
+
+        stdscr = NULL; /* this is by all means a hack to prevent this child from
+                          invoking notify() inside of it's sigchld handler,
+                          which is inherited from the parent. */
+
+        pid_t gchild = fork();
+        if (gchild == 0) {
+            int wrnull = open("/dev/null", O_WRONLY);
+            int rdnull = open("/dev/null", O_RDONLY);
+            close(pipefd[0]);
+
+            if (wrnull < 0 || rdnull < 0) exit(EXIT_FAILURE);
+
+            /* unfortunately, it appears that wine (or bottles-cli, which was
+             * used during testing) closes any extra file descriptors upon
+             * forking off and creating the game process, meaning that
+             * stdout/stderr has to be replaced, and input will have to be
+             * manually discarded in child */
+            if (dup2(rdnull, STDIN_FILENO) < 0
+                || dup2(pipefd[1], STDOUT_FILENO) < 0
+                || dup2(wrnull, STDERR_FILENO) < 0) {
+                exit(EXIT_FAILURE);
+            }
+
+            close(wrnull);
+            close(rdnull);
+            close(pipefd[1]);
+
+            if (execve(tab->exec_cmd, cargv, environ) < 0) {
+                exit(EXIT_FAILURE);
+            }
+        } else if (gchild == -1) {
+            exit(EXIT_FAILURE);
+        }
+
+        close(pipefd[1]);
+        ssize_t read_bytes;
+        /* use the largest buffer that isn't reused */
+        while ((read_bytes = read(pipefd[0], buf, sizeof(buf))) != 0) {
+            if (read_bytes < 0) {
+                if (errno != EINTR) exit(EXIT_FAILURE);
+            }
+        }
+
+        close(pipefd[0]);
+
         exit(EXIT_SUCCESS);
     } else if (child == -1) {
         child_spawned = 0;
