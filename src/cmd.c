@@ -580,7 +580,7 @@ static sidefx call_add(const char** argv, void* cfg_) {
         }
     // clang-format on
 
-    ret = servquery_info(addr, tab->list->servs + tab->list->len);
+    ret = servquery_info(addr, tab->list->servs + tab->list->len, false);
     if (ret < 0) {
         notify("Failed to query server: %d", ret);
         return 0;
@@ -608,7 +608,7 @@ static sidefx call_refetch(const char** argv, void* cfg_) {
     };
 
     free(serv->txt);
-    int ret = servquery_info(addr, serv);
+    int ret = servquery_info(addr, serv, false);
     if (ret < 0) {
         notify("Failed to query server: %d", ret);
         return 0;

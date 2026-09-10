@@ -16,7 +16,8 @@ struct json_keys {
 struct servlist* fetch_servers(const char* url, struct json_keys keys);
 
 int servquery_init(void);
-int servquery_info(const struct sockaddr_in serv, struct servinfo* out);
+int servquery_info(const struct sockaddr_in serv, struct servinfo* out,
+                   bool ignstr);
 int servquery_rules(const struct sockaddr_in serv, struct servrules** out);
 int servquery_clients(const struct sockaddr_in serv, struct servclients** out);
 int servquery_destroy(void);

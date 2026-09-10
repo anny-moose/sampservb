@@ -296,7 +296,8 @@ static int servquery_sendreq(const struct sockaddr_in serv, char opcode,
     return 0;
 }
 
-int servquery_info(const struct sockaddr_in serv, struct servinfo* out) {
+int servquery_info(const struct sockaddr_in serv, struct servinfo* out,
+                   bool ignstr) {
     unsigned char resp[DGRAM_MAX];
     size_t exp;
     ssize_t ret;
@@ -313,6 +314,9 @@ int servquery_info(const struct sockaddr_in serv, struct servinfo* out) {
 
     memcpy(&info.pm, curs, 2);
     curs += 2;
+
+    /* leave other fields untouched */
+    if (ignstr == true) goto end;
 
     /* calculate buffer size */
 
@@ -349,6 +353,7 @@ int servquery_info(const struct sockaddr_in serv, struct servinfo* out) {
 
     info.txt = textbuf;
 
+end:
     info.ip = serv.sin_addr;
     info.port = serv.sin_port;
 
