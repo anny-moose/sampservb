@@ -65,6 +65,36 @@ static size_t parse_toks(char* input, char** output, size_t ntoks) {
     return parsed_toks;
 }
 
+static int parse_path(const char* path, char out[PATH_MAX]) {
+    if (*path == '\0') return -1;
+    size_t path_len = strlen(path);
+    size_t pfx_len = 0;
+
+    if (path_len >= PATH_MAX) return -1;
+
+    if (path[0] == '~' && path[1] == '/') {
+        const char* home_path = getenv("HOME");
+        if (home_path == NULL) {
+            return -2;
+        }
+
+        pfx_len = strlen(home_path);
+
+        if (pfx_len > PATH_MAX - path_len) {
+            return -1;
+        }
+
+        memcpy(out, home_path, pfx_len);
+        path_len--;
+        path++;
+    }
+
+    memcpy(out + pfx_len, path, path_len);
+    out[path_len + pfx_len] = '\0';
+
+    return 0;
+}
+
 static sidefx call_quit(const char** argv, void* cfg_) {
     (void)argv;
     struct app_state* cfg = cfg_;
@@ -266,17 +296,31 @@ static void set_fixedstr(void* target, const char* setting,
 }
 
 static void set_charp(void* target_, const char* setting, const void* params) {
-    (void)params;
     if (target_ == NULL) return;
 
     char** target = target_;
+
+    char path[PATH_MAX];
+    if (params != NULL) {
+        int res = parse_path(setting, path);
+        if (res < 0) {
+            notify("Failed to parse path: %s",
+                   res == -1 ? "Invalid input" : "Error expanding HOME");
+            return;
+        }
+    }
 
     if (*target != NULL) {
         free(*target);
         *target = NULL;
     }
 
-    if (setting != NULL && *setting != '\0') *target = strdup(setting);
+    if (setting != NULL && *setting != '\0') {
+        *target = strdup(params == NULL ? setting : path);
+        if (*target == NULL) {
+            notify("Failed to allocate memory!");
+        }
+    }
 }
 
 static void set_num(void* target, const char* setting, const void* params) {
@@ -391,6 +435,7 @@ const static struct setmap maps[] = {
         .name = "exec_cmd",
         .offset = offsetof(struct tab_state, exec_cmd),
         .setfunc = set_charp,
+        .params = (void*)1,
     },
     {
         .name = "tabname",
@@ -479,31 +524,13 @@ static sidefx call_source(const char** argv, void* cfg_) {
         return ret;
     }
 
-    char path[PATH_MAX + 1]; /* this is the most hacky-feeling relatively
-                                       normal thing to do */
-    path[0] = '\0';
+    char path[PATH_MAX];
 
-    if (*argv[1] == '~') {
-        const char* home_path = getenv("HOME");
-        if (home_path == NULL) {
-            notify("HOME not set, can't expand '~'");
-            return ret;
-        }
-
-        if (strlen(home_path) + strlen(argv[1]) - 1 > PATH_MAX) {
-            notify("path length exceeds PATH_MAX");
-            return ret;
-        }
-
-        strcat(path, home_path);
-        strcat(path, argv[1] + 1);
-    } else {
-        if (strlen(argv[1]) > PATH_MAX) {
-            notify("path length exceeds PATH_MAX");
-            return ret;
-        }
-
-        strcat(path, argv[1]);
+    int res = parse_path(argv[1], path);
+    if (res < 0) {
+        notify("Failed to parse path: %s",
+               res == -1 ? "Invalid input" : "Error expanding HOME");
+        return ret;
     }
 
     FILE* f = fopen(path, "r");
