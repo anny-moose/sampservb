@@ -343,8 +343,8 @@ const static struct setmap maps[] = {
     },
     {
         .name = "shown",
-        .offset = offsetof(struct tab_state, display) +
-                  offsetof(struct display_cfg, shown_fields),
+        .offset = offsetof(struct tab_state, display)
+                  + offsetof(struct display_cfg, shown_fields),
         .setfunc = set_sort,
         .params = (void*)1,
         .fx = REFRESH_LIST,
@@ -357,24 +357,24 @@ const static struct setmap maps[] = {
     },
     {
         .name = "namecols",
-        .offset = offsetof(struct tab_state, display) +
-                  offsetof(struct display_cfg, name_cols),
+        .offset = offsetof(struct tab_state, display)
+                  + offsetof(struct display_cfg, name_cols),
         .setfunc = set_num,
         .params = &setu8_params,
         .fx = REFRESH_LIST,
     },
     {
         .name = "gmcols",
-        .offset = offsetof(struct tab_state, display) +
-                  offsetof(struct display_cfg, gm_cols),
+        .offset = offsetof(struct tab_state, display)
+                  + offsetof(struct display_cfg, gm_cols),
         .setfunc = set_num,
         .params = &setu8_params,
         .fx = REFRESH_LIST,
     },
     {
         .name = "lncols",
-        .offset = offsetof(struct tab_state, display) +
-                  offsetof(struct display_cfg, ln_cols),
+        .offset = offsetof(struct tab_state, display)
+                  + offsetof(struct display_cfg, ln_cols),
         .setfunc = set_num,
         .params = &setu8_params,
         .fx = REFRESH_LIST,
@@ -917,8 +917,8 @@ static sidefx call_remap(const char** argv, void* cfg_) {
             return 0;
         }
     } else {
-        if (*argv[1] < 32 || *argv[1] > 127 || *argv[1] == ':' ||
-            *argv[1] == '\\') {
+        if (*argv[1] < 32 || *argv[1] > 127 || *argv[1] == ':'
+            || *argv[1] == '\\') {
             notify("Can't map to this key");
             return 0;
         }

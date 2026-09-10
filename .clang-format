@@ -4,3 +4,4 @@ IndentWidth: 4
 DerivePointerAlignment: false
 PointerAlignment: Left
 ColumnLimit: 80
+BreakBeforeBinaryOperators: NonAssignment

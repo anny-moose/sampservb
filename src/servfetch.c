@@ -261,8 +261,8 @@ static int servquery_sendreq(const struct sockaddr_in serv, char opcode,
     /* https://open.mp/docs/tutorials/QueryMechanism#response */
     switch (opcode) {
         case 'i':
-            lexp = QUERY_LEN +
-                   17; /* all non-variable-length fields sum up to 17. */
+            lexp = QUERY_LEN
+                   + 17; /* all non-variable-length fields sum up to 17. */
             break;
         case 'c':
         case 'r':
@@ -275,8 +275,8 @@ static int servquery_sendreq(const struct sockaddr_in serv, char opcode,
     req[10] = opcode;
 
     alarm(5);
-    if (sendto(sockfd, req, QUERY_LEN, 0, (struct sockaddr*)&serv,
-               sizeof(serv)) < 0)
+    if (sendto(sockfd, req, QUERY_LEN, 0, (struct sockaddr*)&serv, sizeof(serv))
+        < 0)
         return errno == EINTR ? -2 : -1;
     alarm(0);
 
