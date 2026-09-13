@@ -916,6 +916,31 @@ static sidefx call_tabnew(const char** argv, void* cfg_) {
     return REFRESH_TAB | REFRESH_LIST;
 }
 
+static sidefx call_tabdel(const char** argv, void* cfg_) {
+    (void)argv;
+    struct app_state* cfg = cfg_;
+    struct tab_state* tab = cfg->tabs + cfg->tabs_selected;
+
+    if (cfg->tabs_count < 1) {
+        notify("Unexpected state");
+        return 0;
+    }
+
+    free_tab(tab);
+
+    if (cfg->tabs_selected + 1 < cfg->tabs_count) {
+        const size_t nbytes = sizeof(struct tab_state)
+                              * (cfg->tabs_count - 1 - cfg->tabs_selected);
+        memmove(tab, tab + 1, nbytes);
+    }
+
+    if (cfg->tabs_count > 1) cfg->tabs_count--;
+
+    if (cfg->tabs_selected > 0) cfg->tabs_selected--;
+
+    return REFRESH_TAB | REFRESH_LIST;
+}
+
 static sidefx call_tabmove(const char** argv, void* cfg_) {
     struct app_state* cfg = cfg_;
 
@@ -1185,6 +1210,12 @@ static const struct regcmd cmd_arr[] = {
     {
         .cmd = "tabnew",
         .call = call_tabnew,
+        .expected_args = 0,
+        .lvl = LVL_APPLICATION,
+    },
+    {
+        .cmd = "tabdel",
+        .call = call_tabdel,
         .expected_args = 0,
         .lvl = LVL_APPLICATION,
     },

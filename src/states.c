@@ -30,4 +30,6 @@ void free_tab(struct tab_state* target) {
     free(target->exec_cmd);
 
     servlist_free(target->list);
+    target->tab_name[0] = '\0';
+    target->list = NULL;
 }
