@@ -566,6 +566,27 @@ static sidefx call_source(const char** argv, void* cfg_) {
     return ret;
 }
 
+static sidefx call_masterlist(const char** argv, void* cfg_) {
+    struct tab_state* cfg = cfg_;
+
+    const char* remote = "https://sam.markski.ar/api/GetMasterlist";
+    if (argv[1] == NULL) {
+        notify("No api url provided! Assuming \"%s\"", remote);
+    } else {
+        remote = argv[1];
+    }
+
+    struct servlist* new_list = fetch_masterlist(remote);
+    if (new_list == NULL) {
+        notify("Failed to fetch master list.");
+        return 0;
+    }
+
+    servlist_free(cfg->list);
+    cfg->list = new_list;
+    return REFRESH_SORT | REFRESH_LIST;
+}
+
 static sidefx call_fetch(const char** argv, void* cfg_) {
     struct tab_state* cfg = cfg_;
 
@@ -1181,6 +1202,11 @@ static const struct regcmd cmd_arr[] = {
         .call = call_source,
         .expected_args = 2,
         .lvl = LVL_APPLICATION,
+    },
+    {
+        .cmd = "masterlist",
+        .call = call_masterlist,
+        .expected_args = 2,
     },
     {
         .cmd = "fetch",

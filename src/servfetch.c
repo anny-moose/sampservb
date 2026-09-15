@@ -221,6 +221,98 @@ struct servlist* fetch_servers(const char* url, struct json_keys keys) {
     return list;
 }
 
+/* this is _painfully slow_ on a single core/thread... */
+int parse_masterlist(const char* txt, struct servlist** out) {
+    if (txt == NULL) return -1;
+    char buf[INET_ADDRSTRLEN + 6];
+
+    struct servlist* list = NULL;
+    size_t nmemb = 0;
+    size_t cap = 0;
+
+    struct in_addr addr;
+    uint16_t port;
+
+    size_t buf_off = 0;
+    size_t buf_size = 0;
+    char* textbuf = NULL;
+
+    const char* cursor = txt;
+    size_t len;
+    for (;;) {
+        /* checking for [0-9]|.|: would probably be redundant, as it gets
+         * validated right after. */
+        len = strcspn(cursor, "\n");
+        if (len >= sizeof(buf) - 1) goto loopend; /* skip invalid entries */
+        buf[len] = '\0';
+
+        memcpy(buf, cursor, len);
+        char* colon = strchr(buf, ':');
+        if (colon == NULL) goto loopend;
+        *colon = '\0';
+        colon++;
+
+        if (inet_pton(AF_INET, buf, &addr) != 1) goto loopend;
+        long portx = atol(colon);
+        if (portx <= 0 || portx > UINT16_MAX) goto loopend;
+        port = htons((uint16_t)portx);
+
+        struct sockaddr_in sock_addr = {
+            .sin_family = AF_INET,
+            .sin_addr = addr,
+            .sin_port = port,
+        };
+
+        if (nmemb >= cap) {
+            while (nmemb >= cap) {
+                if (SIZE_MAX - cap < cap / 2) {
+                    cap = nmemb;
+                    goto end;
+                }
+                cap = (cap == 0) ? 4 : cap + cap / 2;
+            }
+            struct servlist* tmp_buf = realloc(
+                list, sizeof(struct servlist) + sizeof(struct servinfo) * cap);
+            if (tmp_buf == NULL) {
+                cap = nmemb;
+                goto end;
+            }
+
+            list = tmp_buf;
+        }
+        if (servquery_binfo(sock_addr, list->servs + nmemb, &textbuf, &buf_off,
+                            &buf_size)
+            < 0)
+            goto loopend;
+
+        nmemb++;
+    loopend:
+        cursor += len;
+        if (*cursor == '\0') break;
+        cursor++;
+    }
+end:
+    if (list != NULL) {
+        list->len = nmemb;
+        list->cap = cap;
+        list->txt = textbuf;
+        *out = list;
+        return 0;
+    }
+    return -1;
+}
+
+struct servlist* fetch_masterlist(const char* url) {
+    struct servlist* list;
+    char* raw = get_resp(url);
+    if (raw == NULL) return NULL;
+
+    if (parse_masterlist(raw, &list) < 0) list = NULL;
+
+    free(raw);
+    return list;
+}
+
 static int sockfd = -1;
 int servquery_init(void) {
     if (sockfd >= 0) {

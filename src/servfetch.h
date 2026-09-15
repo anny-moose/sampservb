@@ -14,6 +14,7 @@ struct json_keys {
 };
 
 struct servlist* fetch_servers(const char* url, struct json_keys keys);
+struct servlist* fetch_masterlist(const char* url);
 
 int servquery_init(void);
 int servquery_binfo(const struct sockaddr_in serv, struct servinfo* out,
