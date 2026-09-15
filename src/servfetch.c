@@ -296,8 +296,17 @@ static int servquery_sendreq(const struct sockaddr_in serv, char opcode,
     return 0;
 }
 
-int servquery_info(const struct sockaddr_in serv, struct servinfo* out,
-                   bool ignstr) {
+/* binty, pleas... (b(uf)info) */
+int servquery_binfo(const struct sockaddr_in serv, struct servinfo* out,
+                    char** buf, size_t* buf_offset, size_t* buf_size) {
+    if (out == NULL) return -1;
+    /* cases where the buf offset/size is a valid pointer for a nonexistent
+     * buffer or the entry's local buffer are considered invalid.
+     * It is the caller's responsibility to free out->txt. */
+    if ((buf == NULL || *buf == out->txt)
+        && (buf_offset != NULL || buf_size != NULL))
+        return -1;
+
     unsigned char resp[DGRAM_MAX];
     size_t exp;
     ssize_t ret;
@@ -316,13 +325,13 @@ int servquery_info(const struct sockaddr_in serv, struct servinfo* out,
     curs += 2;
 
     /* leave other fields untouched */
-    if (ignstr == true) goto end;
+    if (buf == NULL) goto end;
 
     /* calculate buffer size */
 
     size_t offsets[3];
     uint32_t lengths[3];
-    size_t buf_size = 0;
+    size_t buf_occupied = 0;
     /* use another variable instead of then backtracking curs */
     unsigned char* curs_tmp = curs;
     for (size_t i = 0; i < 3; i++) {
@@ -332,26 +341,43 @@ int servquery_info(const struct sockaddr_in serv, struct servinfo* out,
         exp += lengths[i];
         if ((size_t)ret < exp) return -1;
 
-        offsets[i] = buf_size;
-        buf_size += lengths[i] + 1;
+        offsets[i] = buf_occupied;
+        buf_occupied += lengths[i] + 1;
         curs_tmp += 4 + lengths[i];
     }
 
-    char* textbuf = malloc(buf_size);
+    size_t boff = buf_offset == NULL ? 0 : *buf_offset;
+    size_t bsize = buf_size == NULL ? 0 : *buf_size;
+    size_t bleft = bsize - boff;
+    char* textbuf = *buf;
+    if (buf == &out->txt) {
+        textbuf = malloc(buf_occupied);
+    } else if (bleft < buf_occupied) {
+        while (bleft < buf_occupied) {
+            if ((SIZE_MAX - bsize) < bsize / 2) return -1;
+            bsize = (bsize == 0) ? BUF_SIZE : bsize + bsize / 2;
+            bleft = bsize - boff;
+        }
+        textbuf = realloc(textbuf, bsize);
+    }
     if (textbuf == NULL) return -1;
 
     for (size_t i = 0; i < 3; i++) {
         curs += 4;
-        memcpy(textbuf + offsets[i], curs, lengths[i]);
-        textbuf[offsets[i] + lengths[i]] = '\0';
+        memcpy(textbuf + boff + offsets[i], curs, lengths[i]);
+        textbuf[boff + offsets[i] + lengths[i]] = '\0';
         curs += lengths[i];
     }
 
-    info.hn_off = offsets[0];
-    info.gm_off = offsets[1];
-    info.ln_off = offsets[2];
+    info.hn_off = boff + offsets[0];
+    info.gm_off = boff + offsets[1];
+    info.ln_off = boff + offsets[2];
 
-    info.txt = textbuf;
+    info.txt = (buf == &out->txt) ? textbuf : NULL;
+
+    if (buf_offset != NULL) *buf_offset = boff + buf_occupied;
+    if (buf_size != NULL) *buf_size = bsize;
+    *buf = textbuf;
 
 end:
     info.ip = serv.sin_addr;
@@ -359,6 +385,14 @@ end:
 
     *out = info;
     return 0;
+}
+
+int servquery_info(const struct sockaddr_in serv, struct servinfo* out,
+                   bool ignstr) {
+    if (out == NULL) return -1;
+    (void)ignstr;
+    return servquery_binfo(serv, out, (ignstr == true) ? NULL : &out->txt, NULL,
+                           NULL);
 }
 
 int servquery_rules(const struct sockaddr_in serv, struct servrules** out) {
