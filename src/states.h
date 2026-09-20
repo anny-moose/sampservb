@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include "cmd.h"
+#include "keymap.h"
 
 #define FIELD_PR 0x1
 #define FIELD_NAME 0x2
@@ -45,8 +46,7 @@ struct app_state {
     bool quit;
     pid_t game_proc;
 
-    /* 95 printable ascii characters, : and / will be used for \n and \t */
-    struct keymapping* keycmd[95];
+    struct keymap keymap;
 
     size_t tabs_selected;
     struct tab_state* tabs;

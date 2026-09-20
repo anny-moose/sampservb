@@ -4,13 +4,13 @@ LFLAGS := $(shell pkg-config --libs libcurl ncursesw libcjson)
 
 .PHONY: clean
 
-build/out: build/main.o build/cmd.o build/common.o build/serv.o build/servfetch.o build/states.o build/list.o
+build/out: build/main.o build/cmd.o build/common.o build/serv.o build/servfetch.o build/states.o build/list.o build/keymap.o
 	${CC} ${CFLAGS} ${LFLAGS} $^ -o $@
 
-build/main.o: src/main.c src/cmd.h src/common.h src/serv.h src/servfetch.h src/states.h src/list.h
+build/main.o: src/main.c src/cmd.h src/common.h src/serv.h src/servfetch.h src/states.h src/list.h src/keymap.h
 	${CC} ${CFLAGS} $< -c -o $@
 	
-build/cmd.o: src/cmd.c src/cmd.h src/common.h src/serv.h src/servfetch.h src/states.h
+build/cmd.o: src/cmd.c src/cmd.h src/common.h src/serv.h src/servfetch.h src/states.h src/keymap.h
 	${CC} ${CFLAGS} $< -c -o $@
 
 build/common.o: src/common.c src/common.h
@@ -26,6 +26,9 @@ build/states.o: src/states.c src/states.h src/serv.h src/cmd.h
 	${CC} ${CFLAGS} $< -c -o $@
 
 build/list.o: src/list.c src/list.h
+	${CC} ${CFLAGS} $< -c -o $@
+
+build/keymap.o: src/keymap.c src/keymap.h src/cmd.h
 	${CC} ${CFLAGS} $< -c -o $@
 
 clean:

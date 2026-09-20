@@ -49,11 +49,10 @@ struct regcmd {
 struct app_state;
 size_t parse_toks(char* input, char** output, size_t ntoks);
 const struct regcmd* get_cmd(const char* str);
+void* lvl_pointer(uint8_t lvl, struct app_state* cfg);
 sidefx call_cmd(const struct regcmd* cmd, const char** argv,
                 struct app_state* cfg);
 sidefx handle_cmd(char* cmd, struct app_state* cfg);
 
-struct keymapping;
-sidefx keymapping_call(struct keymapping* map, struct app_state* cfg);
 
 #endif

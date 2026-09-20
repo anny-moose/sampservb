@@ -20,6 +20,7 @@
 
 #include "cmd.h"
 #include "common.h"
+#include "keymap.h"
 #include "list.h"
 #include "serv.h"
 #include "servfetch.h"
@@ -158,6 +159,8 @@ int main(void) {
     init_tab(state.tabs);
     struct tab_state* tab = state.tabs + state.tabs_selected;
 
+    keymap_init(&state.keymap, 16);
+
     struct coldesc cols[5] = {
         {"Password", 2},
         {"Name", state.tabs->display.name_cols},
@@ -185,23 +188,6 @@ int main(void) {
         int ch = getch();
         tab = state.tabs + state.tabs_selected;
 
-        size_t idx;
-
-        switch (ch) {
-            case '\n':
-                idx = ':' - 32;
-                break;
-            case '\t':
-                idx = '/' - 32;
-                break;
-            default:
-                idx = ch - 32;
-        }
-
-        if (idx >= 95) {
-            continue;
-        }
-
         /* I don't particularly like this approach either to be honest, but it's
          * ever so slightly less static than the last one. */
         if (ch == ':') {
@@ -213,7 +199,7 @@ int main(void) {
                 tab->selected = tab->list->num_displayed - 1;
             fx = REFRESH_SORT | REFRESH_LIST;
         } else {
-            fx = keymapping_call(state.keycmd[idx], &state);
+            fx = keymap_call(&state.keymap, ch, &state);
         }
 
         if (fx & REFRESH_TAB) {
@@ -241,8 +227,7 @@ int main(void) {
     for (size_t i = 0; i < state.tabs_count; i++) free_tab(state.tabs + i);
     free(state.tabs);
 
-    for (size_t i = 0; i < sizeof(state.keycmd) / sizeof(state.keycmd[0]); i++)
-        free(state.keycmd[i]);
+    keymap_destroy(&state.keymap);
 
     delwin(tabwin);
     delwin(listwin);

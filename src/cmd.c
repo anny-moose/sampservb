@@ -14,18 +14,13 @@
 #include <unistd.h>
 
 #include "common.h"
+#include "keymap.h"
 #include "list.h"
 #include "serv.h"
 #include "servfetch.h"
 #include "states.h"
 
 extern char** environ;
-
-struct keymapping {
-    sidefx (*call)(const char**, void*);
-    uint8_t lvl;
-    char* argv[];
-};
 
 #define CMD_TOKS 3
 #if CMD_TOKS <= 1 || CMD_TOKS == SIZE_MAX
@@ -1031,76 +1026,22 @@ static sidefx call_sort(const char** argv, void* cfg_) {
 static sidefx call_remap(const char** argv, void* cfg_) {
     struct app_state* cfg = cfg_;
 
-    size_t idx;
-
-    if (argv[1] == NULL) {
-        notify("Must specify a key to map to.");
+    int key = keymap_strtokey(argv[1]);
+    if (key == ERR) {
+        notify("Unrecognized key %s", argv[1]);
         return 0;
-    }
-
-    if (*argv[1] == '\0') {
-        idx = ' ' - 32;
-    } else if (argv[1][1] != '\0') {
-        if (strcmp(argv[1], "<CR>") == 0) {
-            idx = ':' - 32;
-        } else if (strcmp(argv[1], "<Tab>") == 0) {
-            idx = '/' - 32;
-        } else {
-            notify("Must specify a key to map to, or <CR>/<Tab>");
-            return 0;
-        }
-    } else {
-        if (*argv[1] < 32 || *argv[1] > 127 || *argv[1] == ':'
-            || *argv[1] == '\\') {
-            notify("Can't map to this key");
-            return 0;
-        }
-
-        idx = *argv[1] - 32;
     }
 
     if (argv[2] == NULL) {
-        free(cfg->keycmd[idx]);
-        cfg->keycmd[idx] = NULL;
+        keymap_del(&cfg->keymap, key);
+        notify("Keymap removed successfully");
         return 0;
     }
 
-    size_t alloc_size = sizeof(struct keymapping);
-
-    const struct regcmd* found = get_cmd(argv[2]);
-    if (found == NULL) {
-        notify("Couldn't find function: %s", argv[2]);
-        return 0;
+    int ok = keymap_set(&cfg->keymap, key, argv[2], argv[3]);
+    if (ok < 0) {
+        notify("An error occured while trying to add mapping: %d", ok);
     }
-
-    if (found->expected_args != 0) {
-        alloc_size += sizeof(char*) * found->expected_args;
-        alloc_size += strlen(argv[2]) + 1;
-        if (argv[3] != NULL) {
-            alloc_size += strlen(argv[3]) + 1;
-        }
-    }
-
-    struct keymapping* newmap = calloc(1, alloc_size);
-    if (newmap == NULL) {
-        notify("Failed to allocate!");
-        return 0;
-    }
-    newmap->call = found->call;
-    newmap->lvl = found->lvl;
-
-    if (found->expected_args != 0) {
-        char* args =
-            stpcpy((char*)(newmap->argv + found->expected_args), argv[2]) + 1;
-        newmap->argv[0] = (char*)(newmap->argv + found->expected_args);
-        if (argv[3] != NULL) {
-            stpcpy(args, argv[3]);
-            parse_toks(args, newmap->argv + 1, found->expected_args - 1);
-        }
-    }
-
-    free(cfg->keycmd[idx]);
-    cfg->keycmd[idx] = newmap;
 
     return 0;
 }
@@ -1291,12 +1232,11 @@ const struct regcmd* get_cmd(const char* str) {
     return NULL;
 }
 
-sidefx call_cmd(const struct regcmd* cmd, const char** argv,
-                struct app_state* cfg) {
-    if (cmd == NULL || (cmd->expected_args != 0 && argv == NULL)) return 0;
+void* lvl_pointer(uint8_t lvl, struct app_state* cfg) {
+    if (cfg == NULL) return NULL;
 
     void* arg;
-    switch (cmd->lvl) {
+    switch (lvl) {
         case LVL_TAB:
             arg = cfg->tabs + cfg->tabs_selected;
             break;
@@ -1307,7 +1247,14 @@ sidefx call_cmd(const struct regcmd* cmd, const char** argv,
             arg = NULL;
     }
 
-    return cmd->call(argv, arg);
+    return arg;
+}
+
+sidefx call_cmd(const struct regcmd* cmd, const char** argv,
+                struct app_state* cfg) {
+    if (cmd == NULL || (cmd->expected_args != 0 && argv == NULL)) return 0;
+
+    return cmd->call(argv, lvl_pointer(cmd->lvl, cfg));
 }
 
 sidefx handle_cmd(char* cmd, struct app_state* cfg) {
@@ -1325,23 +1272,4 @@ sidefx handle_cmd(char* cmd, struct app_state* cfg) {
     }
 
     return call_cmd(found, (const char**)toks, cfg);
-}
-
-/* todo: rewrite */
-sidefx keymapping_call(struct keymapping* map, struct app_state* cfg) {
-    if (map == NULL) return 0;
-
-    void* arg;
-    switch (map->lvl) {
-        case LVL_TAB:
-            arg = cfg->tabs + cfg->tabs_selected;
-            break;
-        case LVL_APPLICATION:
-            arg = cfg;
-            break;
-        default:
-            arg = NULL;
-    }
-
-    return map->call((const char**)map->argv, arg);
 }
