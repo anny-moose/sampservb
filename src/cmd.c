@@ -21,16 +21,6 @@
 
 extern char** environ;
 
-struct regcmd {
-    const char* cmd;
-    sidefx (*call)(const char**, void*);
-    size_t expected_args;
-    uint8_t lvl;
-};
-
-static const struct regcmd* commands;
-static const size_t cmd_count;
-
 struct keymapping {
     sidefx (*call)(const char**, void*);
     uint8_t lvl;
@@ -41,7 +31,7 @@ struct keymapping {
 #if CMD_TOKS <= 1 || CMD_TOKS == SIZE_MAX
 #error Definition of CMD_TOKS falls out of the valid range [2, SIZE_MAX)
 #endif
-static size_t parse_toks(char* input, char** output, size_t ntoks) {
+size_t parse_toks(char* input, char** output, size_t ntoks) {
     if (ntoks < 1 || input == NULL) return 0;
 
     size_t parsed_toks = 0;
@@ -1076,26 +1066,15 @@ static sidefx call_remap(const char** argv, void* cfg_) {
     }
 
     size_t alloc_size = sizeof(struct keymapping);
-    size_t argc = 0;
-    uint8_t lvl = 0;
-    sidefx (*func)(const char**, void*) = NULL;
 
-    for (size_t i = 0; i < cmd_count; i++) {
-        if (strcmp(argv[2], commands[i].cmd) == 0) {
-            argc = commands[i].expected_args;
-            func = commands[i].call;
-            lvl = commands[i].lvl;
-            break;
-        }
-    }
-
-    if (func == NULL) {
+    const struct regcmd* found = get_cmd(argv[2]);
+    if (found == NULL) {
         notify("Couldn't find function: %s", argv[2]);
         return 0;
     }
 
-    if (argc != 0) {
-        alloc_size += sizeof(char*) * argc;
+    if (found->expected_args != 0) {
+        alloc_size += sizeof(char*) * found->expected_args;
         alloc_size += strlen(argv[2]) + 1;
         if (argv[3] != NULL) {
             alloc_size += strlen(argv[3]) + 1;
@@ -1107,15 +1086,16 @@ static sidefx call_remap(const char** argv, void* cfg_) {
         notify("Failed to allocate!");
         return 0;
     }
+    newmap->call = found->call;
+    newmap->lvl = found->lvl;
 
-    newmap->call = func;
-    newmap->lvl = lvl;
-    if (argc != 0) {
-        char* args = stpcpy((char*)(newmap->argv + argc), argv[2]) + 1;
-        newmap->argv[0] = (char*)(newmap->argv + argc);
+    if (found->expected_args != 0) {
+        char* args =
+            stpcpy((char*)(newmap->argv + found->expected_args), argv[2]) + 1;
+        newmap->argv[0] = (char*)(newmap->argv + found->expected_args);
         if (argv[3] != NULL) {
             stpcpy(args, argv[3]);
-            parse_toks(args, newmap->argv + 1, argc - 1);
+            parse_toks(args, newmap->argv + 1, found->expected_args - 1);
         }
     }
 
@@ -1300,8 +1280,35 @@ static const struct regcmd cmd_arr[] = {
         .expected_args = 2,
     },
 };
-static const struct regcmd* commands = cmd_arr;
-static const size_t cmd_count = sizeof(cmd_arr) / sizeof(cmd_arr[0]);
+
+const struct regcmd* get_cmd(const char* str) {
+    if (str == NULL) return NULL;
+    for (size_t i = 0; i < sizeof(cmd_arr) / sizeof(cmd_arr[0]); i++) {
+        if (strcmp(str, cmd_arr[i].cmd) == 0) {
+            return cmd_arr + i;
+        }
+    }
+    return NULL;
+}
+
+sidefx call_cmd(const struct regcmd* cmd, const char** argv,
+                struct app_state* cfg) {
+    if (cmd == NULL || (cmd->expected_args != 0 && argv == NULL)) return 0;
+
+    void* arg;
+    switch (cmd->lvl) {
+        case LVL_TAB:
+            arg = cfg->tabs + cfg->tabs_selected;
+            break;
+        case LVL_APPLICATION:
+            arg = cfg;
+            break;
+        default:
+            arg = NULL;
+    }
+
+    return cmd->call(argv, arg);
+}
 
 sidefx handle_cmd(char* cmd, struct app_state* cfg) {
     if (cmd == NULL || cfg == NULL) return 0;
@@ -1310,37 +1317,17 @@ sidefx handle_cmd(char* cmd, struct app_state* cfg) {
     size_t parsed_toks = parse_toks(cmd, toks, 2);
     if (parsed_toks < 1) return 0;
 
-    for (size_t i = 0; i < cmd_count; i++) {
-        if (strcmp(toks[0], commands[i].cmd) == 0) {
-            if (commands[i].expected_args > CMD_TOKS + 1) {
-                abort();
-                return 0;
-            }
+    const struct regcmd* found = get_cmd(toks[0]);
+    if (found == NULL) return 0;
 
-            if (commands[i].expected_args > 1) {
-                parsed_toks += parse_toks(toks[1], toks + 1,
-                                          commands[i].expected_args - 1);
-            }
-
-            void* arg;
-            switch (commands[i].lvl) {
-                case LVL_TAB:
-                    arg = cfg->tabs + cfg->tabs_selected;
-                    break;
-                case LVL_APPLICATION:
-                    arg = cfg;
-                    break;
-                default:
-                    arg = NULL;
-            }
-
-            return commands[i].call((const char**)toks, arg);
-        }
+    if (found->expected_args > 1) {
+        parsed_toks += parse_toks(toks[1], toks + 1, found->expected_args - 1);
     }
 
-    return 0;
+    return call_cmd(found, (const char**)toks, cfg);
 }
 
+/* todo: rewrite */
 sidefx keymapping_call(struct keymapping* map, struct app_state* cfg) {
     if (map == NULL) return 0;
 

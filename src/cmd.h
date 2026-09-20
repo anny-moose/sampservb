@@ -2,6 +2,7 @@
 #define CMD_H_
 
 #include <stddef.h>
+#include <stdint.h>
 
 /* Stuff for setting up the set mappings */
 
@@ -38,10 +39,21 @@ struct setmap {
 
 /* --Stuff for setting up the set mappings */
 
-struct keymapping;
+struct regcmd {
+    const char* cmd;
+    sidefx (*call)(const char**, void*);
+    size_t expected_args;
+    uint8_t lvl;
+};
 
 struct app_state;
-sidefx keymapping_call(struct keymapping* map, struct app_state* cfg);
+size_t parse_toks(char* input, char** output, size_t ntoks);
+const struct regcmd* get_cmd(const char* str);
+sidefx call_cmd(const struct regcmd* cmd, const char** argv,
+                struct app_state* cfg);
 sidefx handle_cmd(char* cmd, struct app_state* cfg);
+
+struct keymapping;
+sidefx keymapping_call(struct keymapping* map, struct app_state* cfg);
 
 #endif
