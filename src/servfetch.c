@@ -320,6 +320,16 @@ int servquery_init(void) {
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) return -errno;
 
+    struct timeval tout = {
+        .tv_sec = 1,
+    };
+
+    if ((setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tout, sizeof(tout)) < 0)
+        || (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tout, sizeof(tout)) < 0)) {
+        close(fd);
+        return -errno;
+    }
+
     sockfd = fd;
     return 0;
 }
