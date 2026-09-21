@@ -170,7 +170,7 @@ static sidefx call_connect(const char** argv, void* cfg_) {
      * the user if so. */
     ret = servquery_info(addr, &serv, true);
     if (ret < 0) {
-        notify("Failed to query server info: %d", ret);
+        notify("Failed to query server info: %s", strerror(-ret));
         return 0;
     }
 
@@ -685,7 +685,7 @@ static sidefx call_add(const char** argv, void* cfg_) {
 
     ret = servquery_info(addr, tab->list->servs + tab->list->len, false);
     if (ret < 0) {
-        notify("Failed to query server: %d", ret);
+        notify("Failed to query server: %s", strerror(-ret));
         return 0;
     }
     tab->list->len++;
@@ -713,7 +713,7 @@ static sidefx call_refetch(const char** argv, void* cfg_) {
     free(serv->txt);
     int ret = servquery_info(addr, serv, false);
     if (ret < 0) {
-        notify("Failed to query server: %d", ret);
+        notify("Failed to query server: %s", strerror(-ret));
         return 0;
     }
 
@@ -798,7 +798,7 @@ static sidefx call_rules(const char** argv, void* cfg_) {
 
     int ret = servquery_rules(addr, &rules);
     if (ret < 0) {
-        notify("Failed to query server: %d", ret);
+        notify("Failed to query server: %s", strerror(-ret));
         return 0;
     }
 
@@ -867,7 +867,7 @@ static sidefx call_clients(const char** argv, void* cfg_) {
 
     int ret = servquery_clients(addr, &clients);
     if (ret < 0) {
-        notify("Failed to query server: %d", ret);
+        notify("Failed to query server: %s", strerror(-ret));
         return 0;
     }
 
