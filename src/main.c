@@ -123,9 +123,6 @@ int main(void) {
     };
     if (sigaction(SIGCHLD, &handle_child, NULL) < 0)
         err(EXIT_FAILURE, "Failed to set signal handler for SIGCHLD");
-    handle_child.sa_flags = 0;
-    if (sigaction(SIGALRM, &handle_child, NULL) < 0)
-        err(EXIT_FAILURE, "Failed to set signal handler for SIGALRM");
 
     setlocale(LC_ALL, "");
     initscr();
