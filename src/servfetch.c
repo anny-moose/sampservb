@@ -6,6 +6,7 @@
 #include <curl/easy.h>
 #include <err.h>
 #include <errno.h>
+#include <poll.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -221,21 +222,16 @@ struct servlist* fetch_servers(const char* url, struct json_keys keys) {
     return list;
 }
 
-/* this is _painfully slow_ on a single core/thread... */
-int parse_masterlist(const char* txt, struct servlist** out) {
+int parse_masterlist(const char* txt, struct masterstate** out) {
     if (txt == NULL) return -1;
     char buf[INET_ADDRSTRLEN + 6];
 
-    struct servlist* list = NULL;
+    struct masterstate* state = NULL;
     size_t nmemb = 0;
     size_t cap = 0;
 
     struct in_addr addr;
     uint16_t port;
-
-    size_t buf_off = 0;
-    size_t buf_size = 0;
-    char* textbuf = NULL;
 
     const char* cursor = txt;
     size_t len;
@@ -271,19 +267,18 @@ int parse_masterlist(const char* txt, struct servlist** out) {
                 }
                 cap = (cap == 0) ? 4 : cap + cap / 2;
             }
-            struct servlist* tmp_buf = realloc(
-                list, sizeof(struct servlist) + sizeof(struct servinfo) * cap);
+            struct masterstate* tmp_buf =
+                realloc(state, sizeof(struct masterstate)
+                                   + sizeof(struct sockaddr_in) * cap);
             if (tmp_buf == NULL) {
                 cap = nmemb;
                 goto end;
             }
 
-            list = tmp_buf;
+            state = tmp_buf;
         }
-        if (servquery_binfo(sock_addr, list->servs + nmemb, &textbuf, &buf_off,
-                            &buf_size)
-            < 0)
-            goto loopend;
+
+        state->entries[nmemb] = sock_addr;
 
         nmemb++;
     loopend:
@@ -292,25 +287,27 @@ int parse_masterlist(const char* txt, struct servlist** out) {
         cursor++;
     }
 end:
-    if (list != NULL) {
-        list->len = nmemb;
-        list->cap = cap;
-        list->txt = textbuf;
-        *out = list;
+    if (state != NULL) {
+        state->len = nmemb;
+        state->refs = 0;
+        state->buf = (struct servquery_textbuf){0};
+        state->next_entry = 0;
+        state->userdata = NULL;
+        *out = state;
         return 0;
     }
     return -1;
 }
 
-struct servlist* fetch_masterlist(const char* url) {
-    struct servlist* list;
+struct masterstate* fetch_masterstate(const char* url) {
+    struct masterstate* state;
     char* raw = get_resp(url);
     if (raw == NULL) return NULL;
 
-    if (parse_masterlist(raw, &list) < 0) list = NULL;
+    if (parse_masterlist(raw, &state) < 0) state = NULL;
 
     free(raw);
-    return list;
+    return state;
 }
 
 static int sockfd = -1;
@@ -334,14 +331,24 @@ int servquery_init(void) {
     return 0;
 }
 
-#define DGRAM_MAX 65535
-#define QUERY_LEN 11
-static int servquery_sendreq(const struct sockaddr_in serv, char opcode,
-                             unsigned char resp[DGRAM_MAX], size_t* exp,
-                             ssize_t* ret) {
+int servquery_getfd(void) {
     if (sockfd < 0) return -EBADFD;
 
-    unsigned char req[QUERY_LEN];
+    return sockfd;
+}
+
+#define DGRAM_MAX 65535
+#define QUERY_LEN 11
+static int servquery_constructreq(const struct sockaddr_in serv, char opcode,
+                                  unsigned char req[QUERY_LEN]) {
+    switch (opcode) {
+        case SERVQUERY_OPCODE_INFO:
+        case SERVQUERY_OPCODE_CLIENTS:
+        case SERVQUERY_OPCODE_RULES:
+            break;
+        default:
+            return -EINVAL;
+    }
 
     /* https://open.mp/docs/tutorials/QueryMechanism#serialized-data */
     memcpy(req, "SAMP", 4);
@@ -357,60 +364,215 @@ static int servquery_sendreq(const struct sockaddr_in serv, char opcode,
     req[9] = serv.sin_port >> 8;
     */
 
-    size_t lexp;
-    /* https://open.mp/docs/tutorials/QueryMechanism#response */
-    switch (opcode) {
-        case 'i':
-            lexp = QUERY_LEN
-                   + 17; /* all non-variable-length fields sum up to 17. */
-            break;
-        case 'c':
-        case 'r':
-            lexp = QUERY_LEN + 2;
-            break;
-        default:
-            abort();
+    req[10] = opcode;
+    return 0;
+}
+
+static int resp_inspect(struct sockaddr_in* out_from,
+                        unsigned char resp[DGRAM_MAX]) {
+    struct sockaddr_in sender;
+    socklen_t sendersize = sizeof(sender);
+
+    size_t exp = QUERY_LEN;
+
+    ssize_t ret;
+    if ((ret = recvfrom(sockfd, resp, DGRAM_MAX, MSG_PEEK,
+                        (struct sockaddr*)&sender, &sendersize))
+        < 0)
+        return -errno;
+    if ((size_t)ret < exp)
+        return -EBADE;
+    else if (sender.sin_family != AF_INET) {
+        return -EBADE;
     }
 
-    req[10] = opcode;
+    memcpy(out_from, &sender, sizeof(struct sockaddr_in));
+
+    int op = resp[10];
+
+    unsigned char req[QUERY_LEN];
+    int err = servquery_constructreq(sender, op, req);
+    if (err < 0) return -EBADE;
+
+    if (memcmp(req, resp, exp) != 0) return -EBADE;
+
+    return op;
+}
+
+int servquery_inspectresp(struct sockaddr_in* out_from) {
+    unsigned char resp[DGRAM_MAX];
+    return resp_inspect(out_from, resp);
+}
+
+/* doesn't null out out_sender if fails before receiving. only works if socket
+ * isn't shared with another thread */
+static ssize_t test_consume(const struct sockaddr_in* exp_sender,
+                            struct sockaddr_in* out_sender,
+                            enum servquery_opcode exp_opcode,
+                            unsigned char resp[DGRAM_MAX]) {
+    struct sockaddr_in sender;
+
+    int op = resp_inspect(&sender, resp);
+    if (op < 0) return op;
+    if (out_sender != NULL) *out_sender = sender;
+
+    if (op != (int)exp_opcode && exp_opcode != SERVQUERY_OPCODE_UNKNOWN)
+        return -EBADE;
+
+    if (exp_sender != NULL
+        && memcmp(exp_sender, &sender, sizeof(struct sockaddr_in)) != 0)
+        return -EBADE;
+
+    size_t ret;
+    if ((ret = recvfrom(sockfd, resp, DGRAM_MAX, 0, NULL, 0)) < 0)
+        return -errno;
+
+    return ret;
+}
+
+int servquery_discardresp(void) {
+    unsigned char resp[1];
+    if ((recvfrom(sockfd, resp, 1, 0, NULL, NULL)) < 0) return -errno;
+
+    return 0;
+}
+
+int servquery_sendreq(const struct sockaddr_in serv, char opcode) {
+    if (sockfd < 0) return -EBADFD;
+
+    unsigned char req[QUERY_LEN];
+    int ret = servquery_constructreq(serv, opcode, req);
+    if (ret < 0) return ret;
 
     if (sendto(sockfd, req, QUERY_LEN, 0, (struct sockaddr*)&serv, sizeof(serv))
         < 0)
         return -errno;
 
-    ssize_t lret;
-    if ((lret = recvfrom(sockfd, resp, DGRAM_MAX, 0, NULL, NULL)) < 0)
-        return -errno;
+    return 0;
+}
 
-    /* safe cast because ret can't be < 0 */
-    if ((size_t)lret < lexp || memcmp(resp, req, QUERY_LEN) != 0) return -EBADE;
+bool servquery_respavail(void) {
+    if (sockfd < 0) return false;
+    struct pollfd fd = {
+        .fd = sockfd,
+        .events = POLLIN,
+    };
 
-    *exp = lexp;
-    *ret = lret;
+    int nfd;
+    while ((nfd = poll(&fd, 1, 0)) < 0) {
+        if (errno == EAGAIN || errno == EINTR) continue;
+        return false;
+    }
+
+    if (fd.revents & POLLIN) return true;
+    return false;
+}
+
+static int parse_info(const unsigned char resp[DGRAM_MAX], const size_t rlen,
+                      size_t rexp, struct servinfo* out,
+                      struct servquery_textbuf* buf);
+
+static int parse_rules(const unsigned char resp[DGRAM_MAX], const size_t rlen,
+                       size_t rexp, struct servrules** out,
+                       struct servquery_textbuf* buf);
+
+static int parse_clients(const unsigned char resp[DGRAM_MAX], const size_t rlen,
+                         size_t rexp, struct servclients** out,
+                         struct servquery_textbuf* buf);
+
+int servquery_getresp(union servquery_out* out, const struct sockaddr_in* from,
+                      struct sockaddr_in* out_from,
+                      enum servquery_opcode exp_op,
+                      struct servquery_textbuf* buf, bool* out_consumed) {
+    if (out_consumed != NULL) *out_consumed = false;
+    if (out_from != NULL) memset(out_from, 0, sizeof(struct sockaddr_in));
+
+    if (out == NULL) return -EINVAL;
+    unsigned char resp[DGRAM_MAX];
+
+    size_t exp = QUERY_LEN;
+    ssize_t ret = test_consume(from, out_from, exp_op, resp);
+    if (ret < 0) return ret;
+    if (out_consumed != NULL) *out_consumed = true;
+    int op = resp[10];
+
+    /* https://open.mp/docs/tutorials/QueryMechanism#response */
+    switch (op) {
+        case SERVQUERY_OPCODE_INFO:
+            exp += 17; /* all non-variable-length fields sum up to 17. */
+            break;
+        case SERVQUERY_OPCODE_RULES:
+        case SERVQUERY_OPCODE_CLIENTS:
+            exp += 2;
+            break;
+        default:
+            abort(); /* should be unreachable atp */
+    }
+
+    if ((size_t)ret < exp) return -EBADE;
+
+    union servquery_out lout = *out;
+    switch (op) {
+        case SERVQUERY_OPCODE_INFO:
+            ret = parse_info(resp, (size_t)ret, exp, &lout.info, buf);
+            memcpy(&lout.info.ip, resp + 4, 4);
+            memcpy(&lout.info.port, resp + 8, 2);
+            break;
+        case SERVQUERY_OPCODE_RULES:
+            ret = parse_rules(resp, (size_t)ret, exp, &lout.rules, buf);
+            break;
+        case SERVQUERY_OPCODE_CLIENTS:
+            ret = parse_clients(resp, (size_t)ret, exp, &lout.clients, buf);
+            break;
+        default:
+            abort();
+    }
+
+    if (ret < 0) return ret;
+    *out = lout;
+    return op;
+}
+
+int servquery_getanyresp(union servquery_out* out, struct sockaddr_in* out_from,
+                         struct servquery_textbuf* buf, bool* out_consumed) {
+    return servquery_getresp(out, NULL, out_from, SERVQUERY_OPCODE_UNKNOWN, buf,
+                             out_consumed);
+}
+
+static int try_grow_textbuf(struct servquery_textbuf* buf,
+                            size_t needed_space) {
+    if (buf == NULL) return -EINVAL;
+
+    size_t bsize = buf->size;
+    size_t bleft = bsize - buf->off;
+    char* textbuf = buf->txt;
+    if (bleft < needed_space) {
+        while (bleft < needed_space) {
+            if ((SIZE_MAX - bsize) < bsize / 2) return -EOVERFLOW;
+            bsize = (bsize == 0) ? needed_space : bsize + bsize / 2;
+            bleft = bsize - buf->off;
+        }
+        textbuf = realloc(textbuf, bsize);
+    }
+    if (textbuf == NULL) return -errno;
+
+    buf->txt = textbuf;
+    buf->size = bsize;
 
     return 0;
 }
 
-/* binty, pleas... (b(uf)info) */
-int servquery_binfo(const struct sockaddr_in serv, struct servinfo* out,
-                    char** buf, size_t* buf_offset, size_t* buf_size) {
+static int parse_info(const unsigned char resp[DGRAM_MAX], const size_t rlen,
+                      size_t rexp, struct servinfo* out,
+                      struct servquery_textbuf* buf) {
     if (out == NULL) return -EINVAL;
+    if (buf != NULL) {
+        if (buf->size < buf->off) return -EINVAL;
+        if (buf->txt == NULL && buf->size > 0) return -EINVAL;
+    }
 
-    /* cases where the buf offset/size is a valid pointer for a nonexistent
-     * buffer or the entry's local buffer are considered invalid.
-     * It is the caller's responsibility to free out->txt. */
-    if ((buf == NULL || *buf == out->txt)
-        && (buf_offset != NULL || buf_size != NULL))
-        return -EINVAL;
-
-    unsigned char resp[DGRAM_MAX];
-    size_t exp;
-    ssize_t ret;
-    int err = servquery_sendreq(serv, 'i', resp, &exp, &ret);
-    if (err < 0) return err;
-
-    unsigned char* curs = resp + QUERY_LEN;
-    struct servinfo info = {0};
+    const unsigned char* curs = resp + QUERY_LEN;
+    struct servinfo info = *out;
     memcpy(&info.pa, curs, 1);
     curs++;
 
@@ -429,106 +591,83 @@ int servquery_binfo(const struct sockaddr_in serv, struct servinfo* out,
     uint32_t lengths[3];
     size_t buf_occupied = 0;
     /* use another variable instead of then backtracking curs */
-    unsigned char* curs_tmp = curs;
+    const unsigned char* curs_tmp = curs;
     for (size_t i = 0; i < 3; i++) {
         memcpy(lengths + i, curs_tmp, 4);
-        if (lengths[i] > SIZE_MAX - exp) return -EOVERFLOW;
+        if (lengths[i] > SIZE_MAX - rexp) return -EOVERFLOW;
 
-        exp += lengths[i];
-        if ((size_t)ret < exp) return -EBADE;
+        rexp += lengths[i];
+        if (rlen < rexp) return -EBADE;
 
         offsets[i] = buf_occupied;
         buf_occupied += lengths[i] + 1;
         curs_tmp += 4 + lengths[i];
     }
 
-    size_t boff = buf_offset == NULL ? 0 : *buf_offset;
-    size_t bsize = buf_size == NULL ? 0 : *buf_size;
-    size_t bleft = bsize - boff;
-    char* textbuf = *buf;
-    if (buf == &out->txt) {
-        textbuf = malloc(buf_occupied);
-    } else if (bleft < buf_occupied) {
-        while (bleft < buf_occupied) {
-            if ((SIZE_MAX - bsize) < bsize / 2) return -EOVERFLOW;
-            bsize = (bsize == 0) ? BUF_SIZE : bsize + bsize / 2;
-            bleft = bsize - boff;
-        }
-        textbuf = realloc(textbuf, bsize);
-    }
-    if (textbuf == NULL) return -errno;
+    int ret = try_grow_textbuf(buf, buf_occupied);
+    if (ret < 0) return ret;
 
     for (size_t i = 0; i < 3; i++) {
         curs += 4;
-        memcpy(textbuf + boff + offsets[i], curs, lengths[i]);
-        textbuf[boff + offsets[i] + lengths[i]] = '\0';
+        memcpy(buf->txt + buf->off + offsets[i], curs, lengths[i]);
+        buf->txt[buf->off + offsets[i] + lengths[i]] = '\0';
         curs += lengths[i];
     }
 
-    info.hn_off = boff + offsets[0];
-    info.gm_off = boff + offsets[1];
-    info.ln_off = boff + offsets[2];
+    info.hn_off = buf->off + offsets[0];
+    info.gm_off = buf->off + offsets[1];
+    info.ln_off = buf->off + offsets[2];
 
-    info.txt = (buf == &out->txt) ? textbuf : NULL;
+    buf->off += buf_occupied;
 
-    if (buf_offset != NULL) *buf_offset = boff + buf_occupied;
-    if (buf_size != NULL) *buf_size = bsize;
-    *buf = textbuf;
+    /* don't set info.txt, let the caller decide what to do with it */
 
 end:
-    info.ip = serv.sin_addr;
-    info.port = serv.sin_port;
 
     *out = info;
     return 0;
 }
 
-int servquery_info(const struct sockaddr_in serv, struct servinfo* out,
-                   bool ignstr) {
+/* IGNORES buf, parameter is kept solely for similar signature */
+static int parse_rules(const unsigned char resp[DGRAM_MAX], const size_t rlen,
+                       size_t rexp, struct servrules** out,
+                       struct servquery_textbuf* buf) {
     if (out == NULL) return -EINVAL;
-    (void)ignstr;
-    return servquery_binfo(serv, out, (ignstr == true) ? NULL : &out->txt, NULL,
-                           NULL);
-}
+    /* this function completely ignores buf, as in my honest opinion it
+     * currently makes NO SENSE for it to use a user provided buf. */
+    (void)buf;
 
-int servquery_rules(const struct sockaddr_in serv, struct servrules** out) {
-    unsigned char resp[DGRAM_MAX];
-    size_t exp;
-    ssize_t ret;
-    int err = servquery_sendreq(serv, 'r', resp, &exp, &ret);
-    if (err < 0) return err;
-
-    unsigned char* cursor = resp + QUERY_LEN;
+    const unsigned char* cursor = resp + QUERY_LEN;
     uint16_t rc;
     memcpy(&rc, cursor, 2);
     cursor += 2;
 
     /* check to make sure that we are not overflowing exp by adding rc * 2 to
      * it. (length of a rule and a value is described with a single byte) */
-    if ((SIZE_MAX - exp) / 2 < (size_t)rc) return -EOVERFLOW;
-    exp += rc * 2;
+    if ((SIZE_MAX - rexp) / 2 < (size_t)rc) return -EOVERFLOW;
+    rexp += rc * 2;
 
-    if ((size_t)ret < exp) return -EBADE;
+    if (rlen < rexp) return -EBADE;
 
     /* unlike the info function, you can't keep track of the offsets without
      * extra allocations/VLAs, so we just have to go over the list twice. */
 
-    unsigned char* tmp_cursor = cursor;
+    const unsigned char* tmp_cursor = cursor;
     size_t buf_size = 0;
     for (uint16_t i = 0; i < rc; i++) {
         uint8_t len;
 
         memcpy(&len, tmp_cursor, 1);
-        if (SIZE_MAX - exp < (size_t)len) return -EOVERFLOW;
-        exp += len;
-        if ((size_t)ret < exp) return -EBADE;
+        if (SIZE_MAX - rexp < (size_t)len) return -EOVERFLOW;
+        rexp += len;
+        if (rlen < rexp) return -EBADE;
         buf_size += (size_t)len + 1;
         tmp_cursor += len + 1;
 
         memcpy(&len, tmp_cursor, 1);
-        if (SIZE_MAX - exp < (size_t)len) return -EOVERFLOW;
-        exp += len;
-        if ((size_t)ret < exp) return -EBADE;
+        if (SIZE_MAX - rexp < (size_t)len) return -EOVERFLOW;
+        rexp += len;
+        if (rlen < rexp) return -EBADE;
         buf_size += (size_t)len + 1;
         tmp_cursor += len + 1;
     }
@@ -536,6 +675,7 @@ int servquery_rules(const struct sockaddr_in serv, struct servrules** out) {
     struct servrules* rules =
         malloc(sizeof(struct servrules) + sizeof(struct servrule) * rc);
     if (rules == NULL) return -errno;
+
     char* txt = malloc(buf_size);
     if (txt == NULL) {
         free(rules);
@@ -570,33 +710,35 @@ int servquery_rules(const struct sockaddr_in serv, struct servrules** out) {
     return 0;
 }
 
-int servquery_clients(const struct sockaddr_in serv, struct servclients** out) {
-    unsigned char resp[DGRAM_MAX];
-    size_t exp;
-    ssize_t ret;
-    int err = servquery_sendreq(serv, 'c', resp, &exp, &ret);
-    if (err < 0) return err;
+/* IGNORES buf, parameter is kept solely for similar signature */
+static int parse_clients(const unsigned char resp[DGRAM_MAX], const size_t rlen,
+                         size_t rexp, struct servclients** out,
+                         struct servquery_textbuf* buf) {
+    if (out == NULL) return -EINVAL;
+    /* this function completely ignores buf, as in my honest opinion it
+     * currently makes NO SENSE for it to use a user provided buf. */
+    (void)buf;
 
-    unsigned char* cursor = resp + QUERY_LEN;
+    const unsigned char* cursor = resp + QUERY_LEN;
     uint16_t cc;
     memcpy(&cc, cursor, 2);
     cursor += 2;
 
     /* at least 5 bytes per cc */
-    if ((SIZE_MAX - exp) / 5 < (size_t)cc) return -EOVERFLOW;
-    exp += cc * 5;
+    if ((SIZE_MAX - rexp) / 5 < (size_t)cc) return -EOVERFLOW;
+    rexp += cc * 5;
 
-    if ((size_t)ret < exp) return -EBADE;
+    if (rlen < rexp) return -EBADE;
 
-    unsigned char* tmp_cursor = cursor;
+    const unsigned char* tmp_cursor = cursor;
     size_t buf_size = 0;
     for (uint16_t i = 0; i < cc; i++) {
         uint8_t len;
 
         memcpy(&len, tmp_cursor, 1);
-        if (SIZE_MAX - exp < (size_t)len) return -EOVERFLOW;
-        exp += len;
-        if ((size_t)ret < exp) return -EBADE;
+        if (SIZE_MAX - rexp < (size_t)len) return -EOVERFLOW;
+        rexp += len;
+        if (rlen < rexp) return -EBADE;
         buf_size += (size_t)len + 1;
         tmp_cursor += len + 1;
 

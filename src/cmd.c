@@ -97,7 +97,7 @@ static sidefx call_echo(const char** argv, void* cfg_) {
 
 static sidefx call_connect(const char** argv, void* cfg_) {
     struct app_state* cfg = cfg_;
-    struct tab_state* tab = cfg->tabs + cfg->tabs_selected;
+    struct tab_state* tab = app_getcurrtab_raw(cfg);
     if (tab->exec_cmd == NULL) {
         notify("exec_cmd Isn't set!");
         return 0;
@@ -118,7 +118,7 @@ static sidefx call_connect(const char** argv, void* cfg_) {
 
     char ip[INET_ADDRSTRLEN];
     int portx;
-    struct servinfo serv;
+    union servquery_out serv;
 
     if (argv[1] == NULL) {
         if (tab->list == NULL || tab->selected >= tab->list->num_displayed) {
@@ -126,10 +126,10 @@ static sidefx call_connect(const char** argv, void* cfg_) {
             return 0;
         }
 
-        serv = tab->list->servs[tab->selected];
+        serv.info = tab->list->servs[tab->selected];
 
-        inet_ntop(AF_INET, &serv.ip, ip, INET_ADDRSTRLEN);
-        portx = ntohs(serv.port);
+        inet_ntop(AF_INET, &serv.info.ip, ip, INET_ADDRSTRLEN);
+        portx = ntohs(serv.info.port);
         goto launch;
     }
 
@@ -168,15 +168,22 @@ static sidefx call_connect(const char** argv, void* cfg_) {
 
     /* info is queried to check whether server is password-protected and prompt
      * the user if so. */
-    ret = servquery_info(addr, &serv, true);
+    ret = servquery_sendreq(addr, SERVQUERY_OPCODE_INFO);
     if (ret < 0) {
         notify("Failed to query server info: %s", strerror(-ret));
         return 0;
     }
 
+    ret = servquery_getresp(&serv, NULL, &addr, SERVQUERY_OPCODE_INFO, NULL,
+                            NULL);
+    if (ret < 0) {
+        notify("Failed to get response: %s", strerror(-ret));
+        return 0;
+    }
+
     char buf[64];
 launch:
-    if (serv.pa == true) {
+    if (serv.info.pa == true) {
         getinput("Enter password: ", buf, sizeof(buf));
     }
 
@@ -194,7 +201,7 @@ launch:
             "--name", tab->username,
             "--host", ip,
             "--port", txtport,
-            (serv.pa == true) ? "--password" : NULL, buf,
+            (serv.info.pa == true) ? "--password" : NULL, buf,
             NULL,
         };
         // clang-format on
@@ -527,12 +534,12 @@ static sidefx call_source(const char** argv, void* cfg_) {
     char* cmd = NULL;
     size_t length = 0;
 
-    struct tab_state* tab = cfg->tabs + cfg->tabs_selected;
+    struct tab_state* tab = app_getcurrtab_raw(cfg);
     while (getline(&cmd, &length, f) > 0) {
         cmd[strlen(cmd) - 1] =
             '\0'; /* trim the newline at the end that getline leaves */
         ret |= handle_cmd(cmd, cfg);
-        if (ret & REFRESH_TAB) tab = cfg->tabs + cfg->tabs_selected;
+        if (ret & REFRESH_TAB) tab = app_getcurrtab_raw(cfg);
 
         if (ret & REFRESH_SORT) {
             ret ^= REFRESH_SORT;
@@ -551,8 +558,124 @@ static sidefx call_source(const char** argv, void* cfg_) {
     return ret;
 }
 
+static int masterlist_makenextpacket(struct masterstate* state,
+                                     struct expected_packet* out);
+
+static int masterlist_sendnextpacket(struct masterstate* state,
+                                     struct packet_list* list) {
+    struct expected_packet next;
+
+    int err;
+    for (;;) {
+        err = masterlist_makenextpacket(state, &next);
+        if (err < 0) abort(); /* should never happen */
+        if (err == 1) return 1;
+
+        state->next_entry++;
+
+        err = servquery_sendreq(next.from, SERVQUERY_OPCODE_INFO);
+        if (err < 0) continue;
+
+        err = packet_list_addpacket(list, &next);
+        if (err < 0) continue;
+
+        return 0;
+    }
+}
+
+static sidefx master_act(union servquery_out* pack,
+                         struct expected_packet* self,
+                         struct packet_list* list) {
+    sidefx ret = 0;
+    struct masterstate* state = self->state;
+
+    struct rc_tab* ref_tab = state->userdata;
+    if (ref_tab->markfree == true) {
+        goto end;
+    }
+
+    struct tab_state* tab = &ref_tab->tab;
+
+    pack->info.txt = NULL;
+    int err = servlist_add(&tab->list, &pack->info);
+    if (err < 0) {
+        notify("Failed to add server to serverlist: %s", strerror(-err));
+        goto end;
+    }
+    tab->list->num_displayed++;
+    tab->list->txt = state->buf.txt;
+
+    err = masterlist_sendnextpacket(state, list);
+    if (err == 0) {
+        return REFRESH_LIST;
+    }
+    if (err == 1) {
+        ret = REFRESH_LIST | REFRESH_SORT;
+    }
+
+end:
+    tab_post(ref_tab);
+    state->refs--;
+    if (state->refs == 0) free(state);
+    return ret;
+}
+
+static sidefx master_tact(struct expected_packet* self,
+                          struct packet_list* list) {
+    sidefx ret = 0;
+    struct masterstate* state = self->state;
+
+    struct rc_tab* ref_tab = state->userdata;
+    if (ref_tab->markfree == true) {
+        goto end;
+    }
+
+    int err = masterlist_sendnextpacket(state, list);
+    if (err == 0) {
+        return REFRESH_LIST;
+    }
+    if (err == 1) {
+        ret = REFRESH_LIST | REFRESH_SORT;
+    }
+
+end:
+    tab_post(ref_tab);
+    state->refs--;
+    if (state->refs == 0) free(state);
+    return ret;
+}
+
+/* construct a packet to be added into the packet queue, returns 0 on success, 1
+ * if nothing to construct, and < 0 on error */
+static int masterlist_makenextpacket(struct masterstate* state,
+                                     struct expected_packet* out) {
+    if (state == NULL || out == NULL) return -EINVAL;
+
+    if (state->next_entry >= state->len) return 1;
+
+    struct expected_packet pack = (struct expected_packet){
+        .act = master_act,
+        .tact = master_tact,
+        .state = state,
+        .op = SERVQUERY_OPCODE_INFO,
+        .custom_txt = true,
+        .timeout = (struct timeval){.tv_sec = 3},
+        .from = state->entries[state->next_entry],
+    };
+    pack.txt.txt_p = &state->buf;
+
+    *out = pack;
+    return 0;
+}
+
 static sidefx call_masterlist(const char** argv, void* cfg_) {
-    struct tab_state* cfg = cfg_;
+    struct app_state* cfg = cfg_;
+    struct rc_tab* ref_tab = app_getcurrtab(cfg);
+    if (ref_tab == NULL) {
+        notify("A selected tab is required for adding a server");
+        return 0;
+    }
+    struct tab_state* tab = &ref_tab->tab;
 
     const char* remote = "https://sam.markski.ar/api/GetMasterlist";
     if (argv[1] == NULL) {
@@ -561,15 +684,27 @@ static sidefx call_masterlist(const char** argv, void* cfg_) {
         remote = argv[1];
     }
 
-    struct servlist* new_list = fetch_masterlist(remote);
-    if (new_list == NULL) {
+    struct masterstate* state = fetch_masterstate(remote);
+    if (state == NULL) {
         notify("Failed to fetch master list.");
         return 0;
     }
 
-    servlist_free(cfg->list);
-    cfg->list = new_list;
-    return REFRESH_SORT | REFRESH_LIST;
+    servlist_free(tab->list);
+    tab->list = NULL;
+    state->userdata = ref_tab;
+
+    int err;
+    for (int i = 0; i < 5; i++) {
+        err = masterlist_sendnextpacket(state, &cfg->packs);
+        if (err == 1) break;
+        tab_wait(ref_tab);
+        state->refs++;
+    }
+
+    if (state->refs == 0) free(state);
+
+    return 0;
 }
 
 static sidefx call_fetch(const char** argv, void* cfg_) {
@@ -629,8 +764,44 @@ static sidefx call_fetch(const char** argv, void* cfg_) {
     return REFRESH_SORT | REFRESH_LIST;
 }
 
+static sidefx add_act(union servquery_out* pack, struct expected_packet* self,
+                      struct packet_list* list) {
+    (void)list;
+    struct rc_tab* ref_tab = self->state;
+    if (ref_tab->markfree == true) {
+        tab_post(ref_tab);
+        return 0;
+    }
+
+    struct tab_state* tab = &ref_tab->tab;
+
+    pack->info.txt = self->txt.txt.txt;
+    int err = servlist_add(&tab->list, &pack->info);
+    if (err < 0) {
+        notify("Failed to add server to serverlist: %s", strerror(-err));
+        tab_post(ref_tab);
+        return 0;
+    }
+
+    tab_post(ref_tab);
+
+    return REFRESH_LIST | REFRESH_SORT;
+}
+
+static sidefx add_tact(struct expected_packet* self, struct packet_list* list) {
+    (void)list;
+    tab_post(self->state);
+    notify("Failed to fetch server info");
+    return 0;
+}
+
 static sidefx call_add(const char** argv, void* cfg_) {
-    struct tab_state* tab = cfg_;
+    struct app_state* cfg = cfg_;
+    struct rc_tab* ref_tab = app_getcurrtab(cfg);
+    if (ref_tab == NULL) {
+        notify("A selected tab is required for adding a server");
+        return 0;
+    }
 
     const char* generic_err =
         "Address wasn't specified properly! Expected :add <addr> <port>";
@@ -674,23 +845,31 @@ static sidefx call_add(const char** argv, void* cfg_) {
 
     addr.sin_port = htons((uint16_t)portx);
 
-    // clang-format off
-    if (tab->list == NULL || tab->list->len >= tab->list->cap)
-        if (servlist_resize(&tab->list, 
-                tab->list != NULL ? tab->list->cap + tab->list->cap / 2 : 2) < 0) {
-            notify("Failed to allocate");
-            return 0;
-        }
-    // clang-format on
-
-    ret = servquery_info(addr, tab->list->servs + tab->list->len, false);
+    ret = servquery_sendreq(addr, SERVQUERY_OPCODE_INFO);
     if (ret < 0) {
         notify("Failed to query server: %s", strerror(-ret));
         return 0;
     }
-    tab->list->len++;
 
-    return REFRESH_SORT | REFRESH_LIST;
+    tab_wait(ref_tab);
+
+    struct expected_packet pack = (struct expected_packet){
+        .act = add_act,
+        .tact = add_tact,
+        .state = ref_tab,
+        .txt = {0},
+        .op = SERVQUERY_OPCODE_INFO,
+        .timeout = (struct timeval){.tv_sec = 3},
+        .from = addr,
+    };
+
+    ret = packet_list_addpacket(&cfg->packs, &pack);
+    if (ret < 0) {
+        notify("Failed to add packet to queue: %s", strerror(-ret));
+        return 0;
+    }
+
+    return 0;
 }
 
 static sidefx call_refetch(const char** argv, void* cfg_) {
@@ -702,7 +881,9 @@ static sidefx call_refetch(const char** argv, void* cfg_) {
         return 0;
     }
 
+    union servquery_out lserv;
     struct servinfo* serv = tab->list->servs + tab->selected;
+    lserv.info = *serv;
 
     struct sockaddr_in addr = (struct sockaddr_in){
         .sin_family = AF_INET,
@@ -710,34 +891,34 @@ static sidefx call_refetch(const char** argv, void* cfg_) {
         .sin_port = serv->port,
     };
 
-    free(serv->txt);
-    int ret = servquery_info(addr, serv, false);
+    int ret = servquery_sendreq(addr, SERVQUERY_OPCODE_INFO);
     if (ret < 0) {
         notify("Failed to query server: %s", strerror(-ret));
         return 0;
     }
 
+    struct servquery_textbuf buf = {0};
+
+    ret = servquery_getresp(&lserv, &addr, NULL, SERVQUERY_OPCODE_INFO, &buf,
+                            NULL);
+    if (ret < 0) {
+        notify("Failed to query server: %s", strerror(-ret));
+    }
+
+    free(serv->txt);
+    lserv.info.txt = buf.txt;
+    *serv = lserv.info;
+
     return REFRESH_LIST;
 }
 
 static void writestr_rules(WINDOW* win, const void* data, unsigned char col,
-                           size_t elem, int xleft, void* userdata) {
-    struct servrules* list = userdata;
-    if (list == NULL) return;
-    const struct servrule* entry = data;
-    entry += elem;
+                           size_t elem, int xleft, void* userdata);
 
-    switch (col) {
-        case 0:
-            waddnstr(win, list->txt + entry->name_off, xleft);
-            break;
-        case 1:
-            waddnstr(win, list->txt + entry->value_off, xleft);
-            break;
-        default:
-            break;
-    }
-}
+static void writestr_clients(WINDOW* win, const void* data, unsigned char col,
+                             size_t elem, int xleft, void* userdata);
+
+static void popout_list(struct listdesc* desc, const void* data, size_t nels);
 
 static void popout_list(struct listdesc* desc, const void* data, size_t nels) {
     int winypos = LINES / 6;
@@ -777,52 +958,6 @@ static void popout_list(struct listdesc* desc, const void* data, size_t nels) {
     delwin(notif);
 }
 
-static sidefx call_rules(const char** argv, void* cfg_) {
-    (void)argv;
-    struct tab_state* tab = cfg_;
-
-    if (tab->list == NULL || tab->selected >= tab->list->num_displayed) {
-        notify("Select a server to refresh");
-        return 0;
-    }
-
-    struct servinfo* serv = tab->list->servs + tab->selected;
-
-    struct sockaddr_in addr = (struct sockaddr_in){
-        .sin_family = AF_INET,
-        .sin_addr = serv->ip,
-        .sin_port = serv->port,
-    };
-
-    struct servrules* rules;
-
-    int ret = servquery_rules(addr, &rules);
-    if (ret < 0) {
-        notify("Failed to query server: %s", strerror(-ret));
-        return 0;
-    }
-
-    struct coldesc cols[2] = {
-        {"Variable", 0},
-        {"Value", 0},
-    };
-
-    struct listdesc ldesc = {
-        .ncols = 2,
-        .cols = cols,
-        .userdata = rules,
-        .writestr = writestr_rules,
-        .opt = LIST_OPT_BORDER | LIST_OPT_SELSCR,
-    };
-
-    popout_list(&ldesc, rules->rules, rules->len);
-
-    free(rules->txt);
-    free(rules);
-
-    return REFRESH_LIST;
-}
-
 static void writestr_clients(WINDOW* win, const void* data, unsigned char col,
                              size_t elem, int xleft, void* userdata) {
     struct servclients* list = userdata;
@@ -846,9 +981,67 @@ static void writestr_clients(WINDOW* win, const void* data, unsigned char col,
     }
 }
 
-static sidefx call_clients(const char** argv, void* cfg_) {
+static void writestr_rules(WINDOW* win, const void* data, unsigned char col,
+                           size_t elem, int xleft, void* userdata) {
+    struct servrules* list = userdata;
+    if (list == NULL) return;
+    const struct servrule* entry = data;
+    entry += elem;
+
+    switch (col) {
+        case 0:
+            waddnstr(win, list->txt + entry->name_off, xleft);
+            break;
+        case 1:
+            waddnstr(win, list->txt + entry->value_off, xleft);
+            break;
+        default:
+            break;
+    }
+}
+
+static sidefx rules_act(union servquery_out* pack, struct expected_packet* self,
+                        struct packet_list* list) {
+    (void)list;
+    (void)self;
+
+    struct coldesc cols[2] = {
+        {"Variable", 0},
+        {"Value", 0},
+    };
+
+    struct listdesc ldesc = {
+        .ncols = 2,
+        .cols = cols,
+        .userdata = pack->rules,
+        .writestr = writestr_rules,
+        .opt = LIST_OPT_BORDER | LIST_OPT_SELSCR,
+    };
+
+    popout_list(&ldesc, pack->rules->rules, pack->rules->len);
+
+    free(pack->rules->txt);
+    free(pack->rules);
+
+    return REFRESH_LIST;
+}
+
+static sidefx rules_tact(struct expected_packet* self,
+                         struct packet_list* list) {
+    (void)list;
+    (void)self;
+    notify("Failed to fetch server rules");
+    return 0;
+}
+
+static sidefx call_rules(const char** argv, void* cfg_) {
     (void)argv;
-    struct tab_state* tab = cfg_;
+    struct app_state* cfg = cfg_;
+    struct tab_state* tab = app_getcurrtab_raw(cfg);
+    if (tab == NULL) {
+        notify("A selected tab is required for fetching rules");
+        return 0;
+    }
 
     if (tab->list == NULL || tab->selected >= tab->list->num_displayed) {
         notify("Select a server to refresh");
@@ -863,13 +1056,35 @@ static sidefx call_clients(const char** argv, void* cfg_) {
         .sin_port = serv->port,
     };
 
-    struct servclients* clients;
-
-    int ret = servquery_clients(addr, &clients);
+    int ret = servquery_sendreq(addr, SERVQUERY_OPCODE_RULES);
     if (ret < 0) {
         notify("Failed to query server: %s", strerror(-ret));
+    }
+
+    struct expected_packet pack = (struct expected_packet){
+        .act = rules_act,
+        .tact = rules_tact,
+        .state = NULL,
+        .txt = {0},
+        .op = SERVQUERY_OPCODE_RULES,
+        .timeout = (struct timeval){.tv_sec = 3},
+        .from = addr,
+    };
+
+    ret = packet_list_addpacket(&cfg->packs, &pack);
+    if (ret < 0) {
+        notify("Failed to add packet to queue: %s", strerror(-ret));
         return 0;
     }
+
+    return 0;
+}
+
+static sidefx clients_act(union servquery_out* pack,
+                          struct expected_packet* self,
+                          struct packet_list* list) {
+    (void)list;
+    (void)self;
 
     struct coldesc cols[2] = {
         {"Name", 0},
@@ -879,45 +1094,100 @@ static sidefx call_clients(const char** argv, void* cfg_) {
     struct listdesc ldesc = {
         .ncols = 2,
         .cols = cols,
-        .userdata = clients,
+        .userdata = pack->clients,
         .writestr = writestr_clients,
         .opt = LIST_OPT_BORDER | LIST_OPT_SELSCR,
     };
 
-    popout_list(&ldesc, clients->clients, clients->len);
+    popout_list(&ldesc, pack->clients->clients, pack->clients->len);
 
-    free(clients->txt);
-    free(clients);
+    free(pack->clients->txt);
+    free(pack->clients);
 
     return REFRESH_LIST;
+}
+
+static sidefx clients_tact(struct expected_packet* self,
+                           struct packet_list* list) {
+    (void)list;
+    (void)self;
+    notify("Failed to fetch server clients");
+    return 0;
+}
+
+static sidefx call_clients(const char** argv, void* cfg_) {
+    (void)argv;
+    (void)argv;
+    struct app_state* cfg = cfg_;
+    struct tab_state* tab = app_getcurrtab_raw(cfg);
+    if (tab == NULL) {
+        notify("A selected tab is required for fetching clients");
+        return 0;
+    }
+
+    if (tab->list == NULL || tab->selected >= tab->list->num_displayed) {
+        notify("Select a server to refresh");
+        return 0;
+    }
+
+    struct servinfo* serv = tab->list->servs + tab->selected;
+
+    struct sockaddr_in addr = (struct sockaddr_in){
+        .sin_family = AF_INET,
+        .sin_addr = serv->ip,
+        .sin_port = serv->port,
+    };
+
+    int ret = servquery_sendreq(addr, SERVQUERY_OPCODE_CLIENTS);
+    if (ret < 0) {
+        notify("Failed to query server: %s", strerror(-ret));
+    }
+
+    struct expected_packet pack = (struct expected_packet){
+        .act = clients_act,
+        .tact = clients_tact,
+        .state = NULL,
+        .txt = {0},
+        .op = SERVQUERY_OPCODE_CLIENTS,
+        .timeout = (struct timeval){.tv_sec = 3},
+        .from = addr,
+    };
+
+    ret = packet_list_addpacket(&cfg->packs, &pack);
+    if (ret < 0) {
+        notify("Failed to add packet to queue: %s", strerror(-ret));
+        return 0;
+    }
+
+    return 0;
 }
 
 static sidefx call_tabnew(const char** argv, void* cfg_) {
     struct app_state* cfg = cfg_;
     (void)argv;
 
-    if (cfg->tabs_count >= cfg->tabs_capacity) {
-        size_t new_cap = cfg->tabs_capacity + 1;
-        struct tab_state* new_tabs =
-            realloc(cfg->tabs, sizeof(*cfg->tabs) * new_cap);
-        if (new_tabs == NULL) {
-            notify("Failed to allocate!");
+    int err = tabs_newtab(&cfg->tabs, NULL, 0);
+    if (err < 0) {
+        if (err != -ENOSPC) {
+            notify("Error while creating a new tab: %s", strerror(-err));
             return 0;
         }
-        cfg->tabs = new_tabs;
-        cfg->tabs_capacity = new_cap;
+
+        err = tabs_reallocate(&cfg->tabs, cfg->tabs.cap + 1);
+        if (err < 0) {
+            notify("Error while creating a new tab: %s",
+                   err == -EINVAL
+                       ? "Please wait until all unfinished requests finish"
+                       : strerror(-err));
+            return 0;
+        }
+
+        err = tabs_newtab(&cfg->tabs, NULL, 0);
+        if (err < 0) {
+            notify("Error while creating a new tab: %s", strerror(-err));
+            return 0;
+        }
     }
-
-    if (init_tab(&cfg->tabs[cfg->tabs_count]) < 0) {
-        notify("Failed to create tab!");
-        return 0;
-    }
-
-    cfg->tabs_selected = cfg->tabs_count;
-    cfg->tabs_count++;
-
-    snprintf(cfg->tabs[cfg->tabs_selected].tab_name, TABNAME_LEN, "Tab %zu",
-             cfg->tabs_count);
 
     return REFRESH_TAB | REFRESH_LIST;
 }
@@ -925,24 +1195,21 @@ static sidefx call_tabnew(const char** argv, void* cfg_) {
 static sidefx call_tabdel(const char** argv, void* cfg_) {
     (void)argv;
     struct app_state* cfg = cfg_;
-    struct tab_state* tab = cfg->tabs + cfg->tabs_selected;
+    struct rc_tab* tab = app_getcurrtab(cfg);
 
-    if (cfg->tabs_count < 1) {
+    if (tab == NULL) {
         notify("Unexpected state");
         return 0;
     }
 
-    free_tab(tab);
+    tab->markfree = true;
+    tab_post(tab);
+    cfg->tabs.inds[cfg->tabs.sel] = SIZE_MAX;
 
-    if (cfg->tabs_selected + 1 < cfg->tabs_count) {
-        const size_t nbytes = sizeof(struct tab_state)
-                              * (cfg->tabs_count - 1 - cfg->tabs_selected);
-        memmove(tab, tab + 1, nbytes);
-    }
+    size_t newsel = app_getnexttab(cfg);
+    if (newsel >= cfg->tabs.cap) newsel = app_getprevtab(cfg);
 
-    if (cfg->tabs_count > 1) cfg->tabs_count--;
-
-    if (cfg->tabs_selected > 0) cfg->tabs_selected--;
+    cfg->tabs.sel = newsel;
 
     return REFRESH_TAB | REFRESH_LIST;
 }
@@ -950,18 +1217,19 @@ static sidefx call_tabdel(const char** argv, void* cfg_) {
 static sidefx call_tabmove(const char** argv, void* cfg_) {
     struct app_state* cfg = cfg_;
 
-    int change = 1;
-    if (argv[1] != NULL) change = abs(atoi(argv[1]));
-
+    size_t newsel;
     if (strcmp(argv[0], "tabnext") == 0) {
-        cfg->tabs_selected =
-            MIN(cfg->tabs_count - 1, cfg->tabs_selected + change);
+        newsel = app_getnexttab(cfg);
     } else {
-        if ((size_t)change > cfg->tabs_selected)
-            cfg->tabs_selected = 0;
-        else
-            cfg->tabs_selected -= change;
+        newsel = app_getprevtab(cfg);
     }
+
+    if (newsel >= cfg->tabs.cap || cfg->tabs.inds[newsel] == SIZE_MAX) {
+        notify("Tab doesn't exist");
+        return 0;
+    }
+
+    cfg->tabs.sel = newsel;
 
     return REFRESH_TAB | REFRESH_LIST;
 }
@@ -1053,14 +1321,26 @@ static sidefx call_tab(const char** argv, void* cfg_) {
         return 0;
     }
 
-    int tab = atoi(argv[1]) - 1;
-    if (tab < 0 || (size_t)tab >= cfg->tabs_count) {
-        notify("Invalid tab specified. Must be a number between 1 and %zu",
-               cfg->tabs_count);
+    errno = 0;
+    uintmax_t tab = strtoumax(argv[1], NULL, 10);
+    if (errno != 0) {
+        notify("Error while converting number: %s", strerror(errno));
         return 0;
     }
 
-    cfg->tabs_selected = tab;
+    if (tab == 0) {
+        notify("Tab not found.");
+        return 0;
+    }
+
+    tab--;
+
+    if (tab >= cfg->tabs.cap || cfg->tabs.inds[tab] == SIZE_MAX) {
+        notify("Coulnd't find tab %ju", tab + 1);
+        return 0;
+    }
+
+    cfg->tabs.sel = (size_t)tab;
     return REFRESH_TAB | REFRESH_LIST;
 }
 
@@ -1128,6 +1408,7 @@ static const struct regcmd cmd_arr[] = {
         .cmd = "masterlist",
         .call = call_masterlist,
         .expected_args = 2,
+        .lvl = LVL_APPLICATION,
     },
     {
         .cmd = "fetch",
@@ -1143,16 +1424,19 @@ static const struct regcmd cmd_arr[] = {
         .cmd = "rules",
         .call = call_rules,
         .expected_args = 0,
+        .lvl = LVL_APPLICATION,
     },
     {
         .cmd = "clients",
         .call = call_clients,
         .expected_args = 0,
+        .lvl = LVL_APPLICATION,
     },
     {
         .cmd = "add",
         .call = call_add,
         .expected_args = 3,
+        .lvl = LVL_APPLICATION,
     },
     {
         .cmd = "tabnew",
@@ -1238,7 +1522,7 @@ void* lvl_pointer(uint8_t lvl, struct app_state* cfg) {
     void* arg;
     switch (lvl) {
         case LVL_TAB:
-            arg = cfg->tabs + cfg->tabs_selected;
+            arg = app_getcurrtab(cfg);
             break;
         case LVL_APPLICATION:
             arg = cfg;
@@ -1254,7 +1538,10 @@ sidefx call_cmd(const struct regcmd* cmd, const char** argv,
                 struct app_state* cfg) {
     if (cmd == NULL || (cmd->expected_args != 0 && argv == NULL)) return 0;
 
-    return cmd->call(argv, lvl_pointer(cmd->lvl, cfg));
+    void* ptr = lvl_pointer(cmd->lvl, cfg);
+    if (ptr == NULL) return 0;
+
+    return cmd->call(argv, ptr);
 }
 
 sidefx handle_cmd(char* cmd, struct app_state* cfg) {

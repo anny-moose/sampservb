@@ -54,5 +54,6 @@ int sort_serverlist(struct servlist* servers, int8_t sort_field,
                     uint8_t filters, char* query);
 int servlist_resize(struct servlist** servers, size_t new_cap);
 void servlist_free(struct servlist* servs);
+int servlist_add(struct servlist** servs, const struct servinfo* info);
 
 #endif

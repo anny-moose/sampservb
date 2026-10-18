@@ -1,5 +1,6 @@
 #include <curses.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stddef.h>
 
 sig_atomic_t child_spawned;

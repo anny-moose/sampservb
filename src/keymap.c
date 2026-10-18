@@ -194,8 +194,10 @@ sidefx keymap_call(const struct keymap* map, int key, struct app_state* cfg) {
     const struct keymapping* mapping = keymap_get(map, key);
     if (mapping == NULL) return 0;
 
-    return mapping->call((const char**)mapping->argv,
-                         lvl_pointer(mapping->lvl, cfg));
+    void* ptr = lvl_pointer(mapping->lvl, cfg);
+    if (ptr == NULL) return 0;
+
+    return mapping->call((const char**)mapping->argv, ptr);
 }
 
 void keymap_destroy(struct keymap* map) {

@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <locale.h>
+#include <poll.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -26,20 +27,25 @@
 #include "servfetch.h"
 #include "states.h"
 
-int draw_tablist(WINDOW* win, const struct tab_state* tabs, size_t count,
+int draw_tablist(WINDOW* win, const struct rc_tab* tabs, size_t count,
                  size_t selected) {
     if (win == NULL || tabs == NULL) return -1;
     wmove(win, 0, 0);
     wclrtoeol(win);
 
+    size_t shown = 0;
     for (size_t i = 0; i < count; i++) {
-        if (i > 0) {
+        const struct rc_tab* tab = tabs + i;
+        if (tab->refs == 0) continue;
+
+        if (shown > 0) {
             waddch(win, ' ');
             waddch(win, ' ');
         }
         if (selected == i) wattron(win, COLOR_PAIR(SEL_PAIR));
-        wprintw(win, "%zu:%s", i + 1, tabs[i].tab_name);
+        wprintw(win, "%zu:%s", i + 1, tab->tab.tab_name);
         if (selected == i) wattroff(win, COLOR_PAIR(SEL_PAIR));
+        shown++;
     }
 
     return 0;
@@ -116,6 +122,12 @@ void sigchld_handler(int sig) {
     notify("Collected child game process");
 }
 
+static sidefx handle_input(struct app_state* state);
+static sidefx handle_socket(struct app_state* state);
+static void handle_sidefx(struct app_state* state, struct rc_tab** tab_,
+                          sidefx fx, WINDOW* tabwin, WINDOW* listwin);
+static sidefx handle_expired(struct app_state* state, size_t searchstart);
+
 int main(void) {
     struct sigaction handle_child = {
         .sa_flags = SA_RESTART,
@@ -145,28 +157,189 @@ int main(void) {
 
     servquery_init();
 
-    struct tab_state* t = malloc(sizeof(struct tab_state));
-    struct app_state state = {
-        .tabs = t,
-        .tabs_count = 1,
-        .tabs_capacity = 1,
-        .servlist_win = listwin,
-    };
+    struct app_state state = {0};
 
-    init_tab(state.tabs);
-    struct tab_state* tab = state.tabs + state.tabs_selected;
+    int ret = packet_list_init(&state.packs);
+    if (ret < 0) {
+        errx(EXIT_FAILURE, "Failed to initialize packet list: %s",
+             strerror(-ret));
+    }
+
+    tabs_reallocate(&state.tabs, 4);
+
+    tab_init(state.tabs.tabs);
+    struct rc_tab* tab = state.tabs.tabs;
+    state.tabs.inds[0] = 0;
+
+    handle_sidefx(&state, &tab, ~0, tabwin, listwin);
 
     keymap_init(&state.keymap, 16);
 
-    struct coldesc cols[5] = {
-        {"Password", 2},
-        {"Name", state.tabs->display.name_cols},
-        {"Players", 9},
-        {"Gamemode", state.tabs->display.gm_cols},
-        {"Language", state.tabs->display.ln_cols},
+    int sockfd = servquery_getfd();
+    if (sockfd < 0)
+        err(EXIT_FAILURE, "Failed to get socket fd: %s", strerror(-sockfd));
+
+    struct pollfd fds[2] = {
+        {.fd = STDIN_FILENO, .events = POLLIN},
+        {.fd = sockfd, .events = POLLIN},
     };
 
-    struct listdesc listd = {
+    sidefx fx;
+    int wtime = -1;
+    while (state.quit == false) {
+        tab = app_getcurrtab(&state);
+
+        int ret = poll(fds, 2, wtime);
+        if (ret < 0) {
+            if (errno == EINTR) continue;
+            err(EXIT_FAILURE, "poll failed");
+        }
+
+        if (fds[0].revents & POLLERR || fds[0].revents & POLLNVAL)
+            errx(EXIT_FAILURE, "An error happened on stdin");
+
+        if (fds[1].revents & POLLERR || fds[1].revents & POLLNVAL)
+            errx(EXIT_FAILURE, "An error happened on socket");
+
+        if (fds[0].revents & POLLIN) {
+            fx = handle_input(&state);
+            handle_sidefx(&state, &tab, fx, tabwin, listwin);
+        }
+
+        if (fds[1].revents & POLLIN) {
+            fx = 0;
+            do {
+                fx |= handle_socket(&state);
+            } while (servquery_respavail());
+            handle_sidefx(&state, &tab, fx, tabwin, listwin);
+        }
+
+        size_t expi;
+        packet_list_passtime(&state.packs, &expi);
+        fx = handle_expired(&state, expi);
+        handle_sidefx(&state, &tab, fx, tabwin, listwin);
+
+        wtime = packet_list_getmintimeout_ms(&state.packs);
+
+        wrefresh(tabwin);
+        wrefresh(listwin);
+    }
+
+    ret = packet_list_shutdown_sequence(&state.packs);
+
+    delwin(tabwin);
+    delwin(listwin);
+    endwin();
+
+    if (ret < 0) {
+        warnx("Failed to cleanly destroy packet list???");
+    }
+
+    ret = packet_list_destroy(&state.packs);
+    if (ret < 0) {
+        warnx("Failed to destroy packet list: %s", strerror(-ret));
+        if (state.packs.len > 0) {
+            warnx("Leaked packet list entries amount >0! (%zu)",
+                  state.packs.len);
+        }
+    }
+
+    ret = servquery_destroy();
+    if (ret < 0) {
+        warnx("Failed to destroy servquery mechanism: %s", strerror(-ret));
+    }
+
+    for (size_t i = 0; i < state.tabs.cap; i++) {
+        if (state.tabs.tabs[i].refs > 0) tab_post(&state.tabs.tabs[i]);
+        if (state.tabs.tabs[i].refs > 0) {
+            warnx("A tab wasn't freed on exit! # refs left: %ju",
+                  (uintmax_t)state.tabs.tabs[i].refs);
+        }
+    }
+
+    free(state.tabs.tabs);
+    free(state.tabs.inds);
+
+    keymap_destroy(&state.keymap);
+
+    return EXIT_SUCCESS;
+}
+
+#define INPUT_SIZE 64
+sidefx handle_input(struct app_state* state) {
+    char buf[INPUT_SIZE];
+    sidefx fx = 0;
+
+    int ch = getch();
+    if (ch == ':') {
+        getinput(":", buf, INPUT_SIZE);
+        fx = handle_cmd(buf, state);
+    } else if (ch == '/') {
+        struct rc_tab* tab = app_getcurrtab(state);
+        if (tab == NULL) return 0;
+        getinput("Enter search request: ", tab->tab.search_buf, INPUT_SIZE);
+        if (tab->tab.list->num_displayed < tab->tab.selected)
+            tab->tab.selected = tab->tab.list->num_displayed - 1;
+        fx = REFRESH_SORT | REFRESH_LIST;
+    } else {
+        fx = keymap_call(&state->keymap, ch, state);
+    }
+
+    return fx;
+}
+
+sidefx handle_socket(struct app_state* state) {
+    union servquery_out packet;
+    bool consumed;
+    struct sockaddr_in origin;
+    struct expected_packet pack;
+
+    int ret = servquery_inspectresp(&origin);
+    if (ret < 0) {
+        notify("Error while handling socket: %s", strerror(-ret));
+        return 0;
+    }
+
+    ret = packet_list_popmatch(&state->packs, origin, ret, &pack);
+    if (ret < 0) {
+        if (ret == -ENOENT) {
+            notify("Unexpected incoming packet");
+            servquery_discardresp();
+            return 0;
+        } else {
+            notify("Error while processing packet: %s (%d)", strerror(-ret),
+                   -ret);
+            return 0;
+        }
+    }
+
+    ret = servquery_getresp(&packet, NULL, NULL, SERVQUERY_OPCODE_UNKNOWN,
+                            pack.custom_txt ? pack.txt.txt_p : &pack.txt.txt,
+                            &consumed);
+    if (ret < 0) {
+        if (consumed == false) servquery_discardresp();
+        notify("Error while processing packet: %s (%d)", strerror(-ret), -ret);
+        return 0;
+    }
+
+    if (ret < 0) {
+        notify("Error while getting server response: %s", strerror(-ret));
+        if (consumed == false && -ret != EINTR) servquery_discardresp();
+        return 0;
+    }
+
+    if (pack.act == NULL) return 0;
+    return pack.act(&packet, &pack, &state->packs);
+}
+
+static void handle_sidefx(struct app_state* state, struct rc_tab** tab_,
+                          sidefx fx, WINDOW* tabwin, WINDOW* listwin) {
+    static struct coldesc cols[5] = {
+        {"Password", 2}, {"Name", 0},     {"Players", 9},
+        {"Gamemode", 0}, {"Language", 0},
+    };
+
+    static struct listdesc listd = {
         .display_name = "Servers",
         .ncols = 5,
         .cols = cols,
@@ -174,61 +347,53 @@ int main(void) {
         .opt = LIST_OPT_SHOWSEL | LIST_OPT_SHOWSELCOL,
     };
 
-    listd.userdata = NULL;
-    draw_list(listwin, &listd, NULL, 0, tab->selected,
-              upd_listdesc(tab, &listd));
-    wrefresh(listwin);
+    struct rc_tab* tab = *tab_;
 
-    char buf[64] = {0};
-    sidefx fx;
-    while (state.quit == false) {
-        int ch = getch();
-        tab = state.tabs + state.tabs_selected;
-
-        /* I don't particularly like this approach either to be honest, but it's
-         * ever so slightly less static than the last one. */
-        if (ch == ':') {
-            getinput(":", buf, 63);
-            fx = handle_cmd(buf, &state);
-        } else if (ch == '/') {
-            getinput("Enter search request: ", tab->search_buf, 63);
-            if (tab->list->num_displayed < tab->selected)
-                tab->selected = tab->list->num_displayed - 1;
-            fx = REFRESH_SORT | REFRESH_LIST;
-        } else {
-            fx = keymap_call(&state.keymap, ch, &state);
-        }
-
-        if (fx & REFRESH_TAB) {
-            tab = state.tabs + state.tabs_selected;
-            draw_tablist(tabwin, state.tabs, state.tabs_count,
-                         state.tabs_selected);
-            wrefresh(tabwin);
-        }
-        if (fx & REFRESH_SORT)
-            sort_serverlist(tab->list, tab->sort, tab->filters,
-                            tab->search_buf);
-        if (fx & REFRESH_LIST) {
-            draw_list(listwin, &listd,
-                      tab->list == NULL ? NULL : tab->list->servs,
-                      tab->list == NULL ? 0 : tab->list->num_displayed,
-                      tab->selected, upd_listdesc(tab, &listd));
-            wrefresh(listwin);
-        }
-
-        fx = 0;
+    if (fx & REFRESH_TAB) {
+        tab = app_getcurrtab(state);
+        if (tabwin != NULL)
+            draw_tablist(tabwin, state->tabs.tabs, state->tabs.cap,
+                         state->tabs.sel);
     }
 
-    servquery_destroy();
+    if (fx & REFRESH_SORT) {
+        if (tab != NULL)
+            sort_serverlist(tab->tab.list, tab->tab.sort, tab->tab.filters,
+                            tab->tab.search_buf);
+    }
 
-    for (size_t i = 0; i < state.tabs_count; i++) free_tab(state.tabs + i);
-    free(state.tabs);
+    if (fx & REFRESH_LIST) {
+        if (listwin != NULL) {
+            if (tab == NULL) {
+                draw_list(listwin, &listd, NULL, 0, 0, 0);
+            } else {
+                draw_list(
+                    listwin, &listd,
+                    tab->tab.list == NULL ? NULL : tab->tab.list->servs,
+                    tab->tab.list == NULL ? 0 : tab->tab.list->num_displayed,
+                    tab->tab.selected, upd_listdesc(&tab->tab, &listd));
+            }
+        }
+    }
 
-    keymap_destroy(&state.keymap);
+    *tab_ = tab;
+}
 
-    delwin(tabwin);
-    delwin(listwin);
-    endwin();
+static sidefx handle_expired(struct app_state* state, size_t searchstart) {
+    struct expected_packet pack;
+    sidefx ret = 0;
 
-    return EXIT_SUCCESS;
+    while (searchstart != state->packs.len) {
+        int ret = packet_list_popexpired(&state->packs, &searchstart, &pack);
+        if (ret < 0) {
+            if (ret == -ENOENT) break;
+            notify("Error while going through expired packets");
+            break;
+        }
+
+        if (pack.tact == NULL) continue;
+        ret |= pack.tact(&pack, &state->packs);
+    }
+
+    return ret;
 }

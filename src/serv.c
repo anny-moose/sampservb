@@ -1,5 +1,6 @@
 #include "serv.h"
 
+#include <errno.h>
 #include <netinet/in.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -113,4 +114,22 @@ void servlist_free(struct servlist* servs) {
     free(servs->txt);
 
     free(servs);
+}
+
+int servlist_add(struct servlist** list, const struct servinfo* info) {
+    if (list == NULL || info == NULL) return -EINVAL;
+
+    struct servlist* servs = *list;
+
+    /* clang-format off */
+    if (servs == NULL || servs->len >= servs->cap)
+        if (servlist_resize(&servs, servs != NULL ? servs->cap + servs->cap / 2 : 2) < 0)
+            return -errno;
+    /* clang-format on */
+
+    memcpy(servs->servs + servs->len, info, sizeof(struct servinfo));
+    servs->len++;
+
+    *list = servs;
+    return 0;
 }
