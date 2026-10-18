@@ -423,7 +423,7 @@ static ssize_t test_consume(const struct sockaddr_in* exp_sender,
         && memcmp(exp_sender, &sender, sizeof(struct sockaddr_in)) != 0)
         return -EBADE;
 
-    size_t ret;
+    ssize_t ret;
     if ((ret = recvfrom(sockfd, resp, DGRAM_MAX, 0, NULL, 0)) < 0)
         return -errno;
 
