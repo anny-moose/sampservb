@@ -3,6 +3,9 @@
  * data types that follow a similar declarations, using the vector structure as
  * a temporary proxy.
  */
+#ifndef VECTOR_H_
+#define VECTOR_H_
+
 #include <stddef.h>
 
 struct vector {
@@ -17,3 +20,5 @@ int vector_push(struct vector* vec, const void* src);
 int vector_resize(struct vector* vec, const size_t new_cap);
 int vector_swap_pop(struct vector* vec, const size_t idx, void* out);
 void vector_destroy(struct vector* vec);
+
+#endif
