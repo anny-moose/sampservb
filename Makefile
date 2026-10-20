@@ -1,5 +1,5 @@
 CC := clang
-CFLAGS := -O0 -Werror -Wall -pedantic -Wextra -g -fsanitize=address,undefined $(shell pkg-config --cflags libcurl ncursesw libcjson)
+CFLAGS := -O0 -Werror -Wall -Wshadow -pedantic -Wextra -g -fsanitize=address,undefined $(shell pkg-config --cflags libcurl ncursesw libcjson)
 LFLAGS := $(shell pkg-config --libs libcurl ncursesw libcjson)
 
 .PHONY: clean

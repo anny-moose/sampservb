@@ -189,7 +189,7 @@ int main(void) {
     while (state.quit == false) {
         tab = app_getcurrtab(&state);
 
-        int ret = poll(fds, 2, wtime);
+        ret = poll(fds, 2, wtime);
         if (ret < 0) {
             if (errno == EINTR) continue;
             err(EXIT_FAILURE, "poll failed");
@@ -390,9 +390,9 @@ static sidefx handle_expired(struct app_state* state, size_t searchstart) {
     sidefx ret = 0;
 
     while (searchstart != state->packs.len) {
-        int ret = packet_list_popexpired(&state->packs, &searchstart, &pack);
-        if (ret < 0) {
-            if (ret == -ENOENT) break;
+        int err = packet_list_popexpired(&state->packs, &searchstart, &pack);
+        if (err < 0) {
+            if (err == -ENOENT) break;
             notify("Error while going through expired packets");
             break;
         }
