@@ -675,6 +675,14 @@ static sidefx call_masterlist(const char** argv, void* cfg_) {
         notify("A selected tab is required for adding a server");
         return 0;
     }
+
+    if (ref_tab->refs > 1) {
+        notify(
+            "Please wait for all operations to finish before fetching a new "
+            "list");
+        return 0;
+    }
+
     struct tab_state* tab = &ref_tab->tab;
 
     const char* remote = "https://sam.markski.ar/api/GetMasterlist";
@@ -708,13 +716,21 @@ static sidefx call_masterlist(const char** argv, void* cfg_) {
 }
 
 static sidefx call_fetch(const char** argv, void* cfg_) {
-    struct tab_state* cfg = cfg_;
+    struct rc_tab* ref_tab = cfg_;
+    struct tab_state* tab = &ref_tab->tab;
 
     const char* remote = "https://api.open.mp/servers";
     if (argv[1] == NULL) {
         notify("No api url provided! Assuming \"%s\"", remote);
     } else {
         remote = argv[1];
+    }
+
+    if (ref_tab->refs > 1) {
+        notify(
+            "Please wait for all operations to finish before fetching a new "
+            "list");
+        return 0;
     }
 
     char* params = NULL;
@@ -759,8 +775,8 @@ static sidefx call_fetch(const char** argv, void* cfg_) {
         return 0;
     }
 
-    servlist_free(cfg->list);
-    cfg->list = new_list;
+    servlist_free(tab->list);
+    tab->list = new_list;
     return REFRESH_SORT | REFRESH_LIST;
 }
 
