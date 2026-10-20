@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "common.h"
 #include "states.h"
 
 int servlist_hide(struct servlist* servers, size_t idx) {
@@ -121,11 +122,11 @@ int servlist_add(struct servlist** list, const struct servinfo* info) {
 
     struct servlist* servs = *list;
 
-    /* clang-format off */
-    if (servs == NULL || servs->len >= servs->cap)
-        if (servlist_resize(&servs, servs != NULL ? servs->cap + servs->cap / 2 : 2) < 0)
-            return -errno;
-    /* clang-format on */
+    if (servs == NULL || servs->len >= servs->cap) {
+        size_t new_cap = servs != NULL ? servs->cap + servs->cap / 2 : 2;
+        new_cap = MAX(new_cap, 2);
+        if (servlist_resize(&servs, new_cap) < 0) return -errno;
+    }
 
     memcpy(servs->servs + servs->len, info, sizeof(struct servinfo));
     servs->len++;

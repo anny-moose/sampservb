@@ -16,7 +16,7 @@ build/cmd.o: src/cmd.c src/cmd.h src/common.h src/serv.h src/servfetch.h src/sta
 build/common.o: src/common.c src/common.h
 	${CC} ${CFLAGS} $< -c -o $@
 
-build/serv.o: src/serv.c src/serv.h src/states.h
+build/serv.o: src/serv.c src/serv.h src/states.h src/common.h
 	${CC} ${CFLAGS} $< -c -o $@
 
 build/servfetch.o: src/servfetch.c src/servfetch.h src/serv.h
