@@ -609,14 +609,18 @@ static sidefx master_act(union servquery_out* pack,
     if (err == 0) {
         return REFRESH_LIST;
     }
+
     if (err == 1) {
-        ret = REFRESH_LIST | REFRESH_SORT;
+        ret = REFRESH_LIST;
     }
 
 end:
-    tab_post(ref_tab);
     state->refs--;
-    if (state->refs == 0) free(state);
+    if (state->refs == 0) {
+        free(state);
+        sort_serverlist(tab->list, tab->sort, tab->filters, tab->search_buf);
+    }
+    tab_post(ref_tab);
     return ret;
 }
 
@@ -630,18 +634,24 @@ static sidefx master_tact(struct expected_packet* self,
         goto end;
     }
 
+    struct tab_state* tab = &ref_tab->tab;
+
     int err = masterlist_sendnextpacket(state, list);
     if (err == 0) {
         return REFRESH_LIST;
     }
+
     if (err == 1) {
-        ret = REFRESH_LIST | REFRESH_SORT;
+        ret = REFRESH_LIST;
     }
 
 end:
-    tab_post(ref_tab);
     state->refs--;
-    if (state->refs == 0) free(state);
+    if (state->refs == 0) {
+        free(state);
+        sort_serverlist(tab->list, tab->sort, tab->filters, tab->search_buf);
+    }
+    tab_post(ref_tab);
     return ret;
 }
 
@@ -799,9 +809,10 @@ static sidefx add_act(union servquery_out* pack, struct expected_packet* self,
         return 0;
     }
 
+    sort_serverlist(tab->list, tab->sort, tab->filters, tab->search_buf);
     tab_post(ref_tab);
 
-    return REFRESH_LIST | REFRESH_SORT;
+    return REFRESH_LIST;
 }
 
 static sidefx add_tact(struct expected_packet* self, struct packet_list* list) {
