@@ -174,7 +174,7 @@ static sidefx call_connect(const char** argv, void* cfg_) {
         return 0;
     }
 
-    ret = servquery_getresp(&serv, NULL, &addr, SERVQUERY_OPCODE_INFO, NULL,
+    ret = servquery_getresp(&serv, &addr, NULL, SERVQUERY_OPCODE_INFO, NULL,
                             NULL);
     if (ret < 0) {
         notify("Failed to get response: %s", strerror(-ret));
