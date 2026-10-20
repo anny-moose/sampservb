@@ -276,7 +276,12 @@ sidefx handle_input(struct app_state* state) {
         fx = handle_cmd(buf, state);
     } else if (ch == '/') {
         struct rc_tab* tab = app_getcurrtab(state);
-        if (tab == NULL) return 0;
+        if (tab == NULL)
+            return 0;
+        else if (tab->tab.list == NULL) {
+            notify("Can't search on an empty list");
+            return 0;
+        }
         getinput("Enter search request: ", tab->tab.search_buf, INPUT_SIZE);
         if (tab->tab.list->num_displayed < tab->tab.selected)
             tab->tab.selected = tab->tab.list->num_displayed - 1;
