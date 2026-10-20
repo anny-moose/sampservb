@@ -7,7 +7,7 @@
 
 #include "cmd.h"
 
-struct keycodemap {
+const static struct keycodemap {
     const char* name;
     int key;
 } keys[] = {
@@ -19,8 +19,10 @@ struct keycodemap {
 int keymap_strtokey(const char* str) {
     if (str == NULL) return ERR;
 
+    if (*str == '\0') return ERR;
+
     if (str[1] == '\0') {
-        if (*str < 32 || *str > 127 || *str == ':' || *str == '\\') return ERR;
+        if (*str < 32 || *str > 127 || *str == ':' || *str == '/') return ERR;
 
         return *str;
     }
@@ -176,7 +178,10 @@ int keymap_set(struct keymap* map, int key, const char* cmd,
         size_t newcap = (map->cap < 2) ? 2 : map->cap + map->cap / 2;
 
         void* newdata = realloc(map->data, sizeof(map->data[0]) * newcap);
-        if (newdata == NULL) return -1;
+        if (newdata == NULL) {
+            free(newmap);
+            return -1;
+        }
         map->cap = newcap;
         map->data = newdata;
     }
