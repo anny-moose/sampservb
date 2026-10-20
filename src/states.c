@@ -306,9 +306,9 @@ int tabs_reallocate(struct tabs* tabs, size_t new_size) {
 }
 
 struct rc_tab* app_getcurrtab(struct app_state* state) {
-    if (state == NULL || state->tabs.sel > state->tabs.cap) return NULL;
+    if (state == NULL || state->tabs.sel >= state->tabs.cap) return NULL;
     size_t idx = state->tabs.inds[state->tabs.sel];
-    if (idx > state->tabs.cap) return NULL;
+    if (idx >= state->tabs.cap) return NULL;
 
     struct rc_tab* tab = state->tabs.tabs + idx;
     if (tab->refs == 0) return NULL;
@@ -324,7 +324,7 @@ struct tab_state* app_getcurrtab_raw(struct app_state* state) {
 }
 
 size_t app_getnexttab(struct app_state* state) {
-    for (size_t i = state->tabs.sel; i < state->tabs.cap; i++) {
+    for (size_t i = state->tabs.sel + 1; i < state->tabs.cap; i++) {
         if (state->tabs.inds[i] != SIZE_MAX) return i;
     }
 

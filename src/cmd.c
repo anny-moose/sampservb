@@ -930,6 +930,7 @@ static sidefx call_refetch(const char** argv, void* cfg_) {
                             NULL);
     if (ret < 0) {
         notify("Failed to query server: %s", strerror(-ret));
+        return 0;
     }
 
     free(serv->txt);
