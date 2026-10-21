@@ -345,8 +345,10 @@ static void handle_sidefx(struct app_state* state, struct rc_tab** tab_,
         {"Gamemode", 0}, {"Language", 0},
     };
 
+    static char display_name[] = "Servers (xxxx)";
+
     static struct listdesc listd = {
-        .display_name = "Servers",
+        .display_name = display_name,
         .ncols = 5,
         .cols = cols,
         .writestr = writestr_serv,
@@ -370,6 +372,17 @@ static void handle_sidefx(struct app_state* state, struct rc_tab** tab_,
 
     if (fx & REFRESH_LIST) {
         if (listwin != NULL) {
+            size_t servcnt = 0;
+
+            if (tab != NULL) {
+                if (tab->tab.list != NULL) {
+                    servcnt = MIN(9999, tab->tab.list->num_displayed);
+                }
+            }
+
+            snprintf(display_name, sizeof(display_name), "Servers (%zu)",
+                     servcnt);
+
             if (tab == NULL) {
                 draw_list(listwin, &listd, NULL, 0, 0, 0);
             } else {
