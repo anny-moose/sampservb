@@ -167,11 +167,16 @@ int main(void) {
 
     tabs_reallocate(&state.tabs, 4);
 
-    tab_init(state.tabs.tabs);
-    struct rc_tab* tab = state.tabs.tabs;
-    state.tabs.inds[0] = 0;
+    ret = tabs_newtab(&state.tabs, NULL, 0);
+    if (ret < 0) {
+        errx(EXIT_FAILURE, "Failed to create new tab: %s", strerror(-ret));
+    }
+
+    struct rc_tab* tab = app_getcurrtab(&state);
 
     handle_sidefx(&state, &tab, ~0, tabwin, listwin);
+    wrefresh(tabwin);
+    wrefresh(listwin);
 
     keymap_init(&state.keymap, 16);
 
