@@ -47,6 +47,7 @@ struct regcmd {
 };
 
 struct app_state;
+
 size_t parse_toks(char* input, char** output, size_t ntoks);
 const struct regcmd* get_cmd(const char* str);
 void* lvl_pointer(uint8_t lvl, struct app_state* cfg);
@@ -54,5 +55,7 @@ sidefx call_cmd(const struct regcmd* cmd, const char** argv,
                 struct app_state* cfg);
 sidefx handle_cmd(char* cmd, struct app_state* cfg);
 
+int setup_default_binds(struct app_state* cfg);
+int load_default_config(struct app_state* cfg);
 
 #endif

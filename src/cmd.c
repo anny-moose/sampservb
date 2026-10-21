@@ -527,7 +527,7 @@ static sidefx call_source(const char** argv, void* cfg_) {
 
     FILE* f = fopen(path, "r");
     if (f == NULL) {
-        notify("Failed to open the file: %s", strerror(errno));
+        notify("Failed to open the configuration file: %s", strerror(errno));
         return ret;
     }
 
@@ -1587,4 +1587,66 @@ sidefx handle_cmd(char* cmd, struct app_state* cfg) {
     }
 
     return call_cmd(found, (const char**)toks, cfg);
+}
+
+/* this is far from the best solution and should potentially be changed. */
+
+const static struct {
+    int key;
+    char* cmd;
+    char* args;
+} dfl_binds[] = {
+    {'h', "sortprev", NULL},
+    {'j', "next", NULL},
+    {'k', "prev", NULL},
+    {'l', "sortnext", NULL},
+    {'\n', "connect", NULL},
+    {'r', "rules", NULL},
+    {'c', "clients", NULL},
+    {'R', "refetch", NULL},
+    {'\t', "sort", NULL},
+    {'e', "set", "filter empty"},
+    {'p', "set", "filter password"},
+    {'f', "set", "filter full"},
+    {'1', "tab", "1"},
+    {'2', "tab", "2"},
+    {'3', "tab", "3"},
+    {'=', "resize", "5"},
+    {'-', "resize", "-5"},
+};
+
+int setup_default_binds(struct app_state* cfg) {
+    for (size_t i = 0; i < sizeof(dfl_binds) / sizeof(*dfl_binds); i++) {
+        int err = keymap_set(&cfg->keymap, dfl_binds[i].key, dfl_binds[i].cmd,
+                             dfl_binds[i].args);
+
+        if (err < 0) return err;
+    }
+
+    return 0;
+}
+
+int load_default_config(struct app_state* cfg) {
+    char path[PATH_MAX];
+    const char* cfg_path = "sampservb/init.rc";
+
+    const char* config = getenv("XDG_CONFIG_HOME");
+    if (config != NULL) {
+        snprintf(path, sizeof(path), "%s/%s", config, cfg_path);
+    } else {
+        const char* home = getenv("HOME");
+        if (home == NULL) return -ENOENT;
+
+        snprintf(path, sizeof(path), "%s/.config/%s", home, cfg_path);
+    }
+
+    const char* argv[] = {
+        "so",
+        path,
+        NULL,
+    };
+
+    call_source(argv, cfg);
+
+    return 0;
 }

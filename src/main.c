@@ -174,11 +174,24 @@ int main(void) {
 
     struct rc_tab* tab = app_getcurrtab(&state);
 
-    handle_sidefx(&state, &tab, ~0, tabwin, listwin);
     wrefresh(tabwin);
     wrefresh(listwin);
 
     keymap_init(&state.keymap, 16);
+
+    ret = setup_default_binds(&state);
+    if (ret < 0) {
+        notify(
+            "An error happened when trying to set up default keybinds. State "
+            "may be inconsistent");
+    }
+
+    ret = load_default_config(&state);
+    if (ret < 0) {
+        notify("Failed to load config: %s", -ret);
+    }
+
+    handle_sidefx(&state, &tab, ~0, tabwin, listwin);
 
     int sockfd = servquery_getfd();
     if (sockfd < 0)
