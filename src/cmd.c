@@ -214,8 +214,8 @@ launch:
             exit(EXIT_FAILURE);
         }
 
-        stdscr = NULL; /* this is by all means a hack to prevent this child from
-                          invoking notify() inside of it's sigchld handler,
+        win_exists = 0; /* this is by all means a hack to prevent this child
+                          from invoking notify() inside of it's sigchld handler,
                           which is inherited from the parent. */
 
         pid_t gchild = fork();

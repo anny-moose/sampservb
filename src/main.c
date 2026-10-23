@@ -1,11 +1,15 @@
+/* pkg-config doesn't set _XOPEN_SOURCE for ncursesw on certain systems. (e.g)
+ * OpenBSD. This causes for compilation errors when trying to use the wide
+ * character API */
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 600
+#endif
 
-#define NCURSES_WIDECHAR 1
 #include <arpa/inet.h>
 #include <cjson/cJSON.h>
 #include <curl/curl.h>
 #include <curl/easy.h>
 #include <curses.h>
-#include <err.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -134,9 +138,11 @@ int main(void) {
         .sa_handler = sigchld_handler,
     };
     if (sigaction(SIGCHLD, &handle_child, NULL) < 0)
-        err(EXIT_FAILURE, "Failed to set signal handler for SIGCHLD");
+        crash_exit("Failed to set signal handler for SIGCHLD: %s",
+                   strerror(errno));
 
     setlocale(LC_ALL, "");
+    win_exists = 1;
     initscr();
 
     start_color();
@@ -161,15 +167,14 @@ int main(void) {
 
     int ret = packet_list_init(&state.packs);
     if (ret < 0) {
-        errx(EXIT_FAILURE, "Failed to initialize packet list: %s",
-             strerror(-ret));
+        crash_exit("Failed to initialize packet list: %s", strerror(-ret));
     }
 
     tabs_reallocate(&state.tabs, 4);
 
     ret = tabs_newtab(&state.tabs, NULL, 0);
     if (ret < 0) {
-        errx(EXIT_FAILURE, "Failed to create new tab: %s", strerror(-ret));
+        crash_exit("Failed to create new tab: %s", strerror(-ret));
     }
 
     struct rc_tab* tab = app_getcurrtab(&state);
@@ -195,7 +200,7 @@ int main(void) {
 
     int sockfd = servquery_getfd();
     if (sockfd < 0)
-        err(EXIT_FAILURE, "Failed to get socket fd: %s", strerror(-sockfd));
+        crash_exit("Failed to get socket fd: %s", strerror(-sockfd));
 
     struct pollfd fds[2] = {
         {.fd = STDIN_FILENO, .events = POLLIN},
@@ -210,14 +215,14 @@ int main(void) {
         ret = poll(fds, 2, wtime);
         if (ret < 0) {
             if (errno == EINTR) continue;
-            err(EXIT_FAILURE, "poll failed");
+            crash_exit("poll failed: %s", strerror(errno));
         }
 
         if (fds[0].revents & POLLERR || fds[0].revents & POLLNVAL)
-            errx(EXIT_FAILURE, "An error happened on stdin");
+            crash_exit("An error happened on stdin");
 
         if (fds[1].revents & POLLERR || fds[1].revents & POLLNVAL)
-            errx(EXIT_FAILURE, "An error happened on socket");
+            crash_exit("An error happened on socket");
 
         if (fds[0].revents & POLLIN) {
             fx = handle_input(&state);
@@ -248,30 +253,32 @@ int main(void) {
     delwin(tabwin);
     delwin(listwin);
     endwin();
+    win_exists = 0;
 
     if (ret < 0) {
-        warnx("Failed to cleanly destroy packet list???");
+        fprintf(stderr, "Failed to cleanly destroy packet list???\n");
     }
 
     ret = packet_list_destroy(&state.packs);
     if (ret < 0) {
-        warnx("Failed to destroy packet list: %s", strerror(-ret));
+        fprintf(stderr, "Failed to destroy packet list: %s\n", strerror(-ret));
         if (state.packs.len > 0) {
-            warnx("Leaked packet list entries amount >0! (%zu)",
-                  state.packs.len);
+            fprintf(stderr, "Leaked packet list entries amount >0! (%zu)\n",
+                    state.packs.len);
         }
     }
 
     ret = servquery_destroy();
     if (ret < 0) {
-        warnx("Failed to destroy servquery mechanism: %s", strerror(-ret));
+        fprintf(stderr, "Failed to destroy servquery mechanism: %s\n",
+                strerror(-ret));
     }
 
     for (size_t i = 0; i < state.tabs.cap; i++) {
         if (state.tabs.tabs[i].refs > 0) tab_post(&state.tabs.tabs[i]);
         if (state.tabs.tabs[i].refs > 0) {
-            warnx("A tab wasn't freed on exit! # refs left: %ju",
-                  (uintmax_t)state.tabs.tabs[i].refs);
+            fprintf(stderr, "A tab wasn't freed on exit! # refs left: %ju\n",
+                    (uintmax_t)state.tabs.tabs[i].refs);
         }
     }
 

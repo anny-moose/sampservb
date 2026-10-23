@@ -4,7 +4,6 @@
 #include <cJSON.h>
 #include <curl/curl.h>
 #include <curl/easy.h>
-#include <err.h>
 #include <errno.h>
 #include <poll.h>
 #include <stddef.h>
@@ -25,8 +24,7 @@ static size_t mem_cb(void* contents, size_t size, size_t nmemb, void* userp) {
 
     char* ptr = realloc(mem->memory, mem->size + realsize + 1);
     if (!ptr) {
-        /* out of memory! */
-        warn("not enough memory");
+        fprintf(stderr, "Failed to reallocate: %s\n", strerror(errno));
         return 0;
     }
 
@@ -55,14 +53,14 @@ static int parse_servers(const char* json, struct json_keys keys,
     if (parsed == NULL) {
         const char* error_ptr = cJSON_GetErrorPtr();
         if (error_ptr != NULL) {
-            warnx("Json parsing error: %s", error_ptr);
+            fprintf(stderr, "Json parsing error: %s\n", error_ptr);
         }
         ret = -2;
         goto end;
     }
 
     if (!cJSON_IsArray(parsed)) {
-        warnx("Server list isn't an array");
+        fprintf(stderr, "Server list isn't an array\n");
         ret = -2;
         goto end_free;
     }
@@ -76,7 +74,8 @@ static int parse_servers(const char* json, struct json_keys keys,
         sizeof(struct servlist) + sizeof(struct servinfo) * arr_size;
     struct servlist* list = malloc(alloc_size);
     if (list == NULL) {
-        warn("Malloc of %zu bytes failed", alloc_size);
+        fprintf(stderr, "Malloc of %zu bytes failed: %s\n", alloc_size,
+                strerror(errno));
         goto end_free;
     }
     list->cap = arr_size;
@@ -84,7 +83,7 @@ static int parse_servers(const char* json, struct json_keys keys,
     size_t server_count = 0;
     char* textbuf = malloc(BUF_SIZE);
     if (textbuf == NULL) {
-        warnx("Failed to allocate textbuf");
+        fprintf(stderr, "Failed to allocate textbuf\n");
         goto end_freetext;
     }
 
@@ -185,7 +184,7 @@ static char* get_resp(const char* url) {
     struct response json = {0};
     CURL* curl = curl_easy_init();
     if (curl == NULL) {
-        warnx("curl init failed");
+        fprintf(stderr, "curl init failed\n");
         return NULL;
     }
 
@@ -198,7 +197,8 @@ static char* get_resp(const char* url) {
 
     resp = curl_easy_perform(curl);
     if (resp != CURLE_OK) {
-        warnx("Failed to retrieve %s: %s\n", url, curl_easy_strerror(resp));
+        fprintf(stderr, "Failed to retrieve %s: %s\n", url,
+                curl_easy_strerror(resp));
         curl_easy_cleanup(curl);
         return NULL;
     }

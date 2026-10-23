@@ -118,10 +118,14 @@ set tabname Masterlist
 ```
 
 ## # Project status
-The project is still in development, however it has reached a state where it's usable. There are multiple planned features, including character detection and conversion for servers that don't use a UTF-8 encoding, rewriting the command prompt to not block, and more.
+The project is still in development, however it has reached a state where it's usable.
+There are multiple planned features, including character detection and conversion for servers that don't use a
+UTF-8 encoding, rewriting the command prompt to not block, and more.
 
 ## # Portability
-Aside from libraries such as `ncurses`, `libcurl` and `cJSON`, BSD `err.h` is *currently* used in the source code, making it not fully standard-compliant.
+This project depends on the following libraries: `ncurses`, `libcurl`, `cJSON`. Building it also requires `gmake`.
 
+Various ncurses-specific APIs (mouse support, etc) are intentionally avoided. The widechar curses API is in use. If `pkg-config`
+doesn't set `_XOPEN_SOURCE`, it is defined to 600 in `main.c`.
 
 
