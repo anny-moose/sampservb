@@ -33,7 +33,7 @@ jobs:
     - name: upload debug build
       uses: actions/upload-artifact@v7.0.2
       with:
-        path: sampserv-debug
+        path: sampservb-debug
         archive: false
         if-no-files-found: error
         overwrite: true
@@ -41,7 +41,7 @@ jobs:
     - name: upload release build
       uses: actions/upload-artifact@v7.0.2
       with:
-        path: sampserv-release
+        path: sampservb-release
         archive: false
         if-no-files-found: error
         overwrite: true
