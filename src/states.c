@@ -8,7 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "cmd.h"
 #include "serv.h"
+#include "servfetch.h"
 #include "vector.h"
 
 int tab_init(struct rc_tab* out) {

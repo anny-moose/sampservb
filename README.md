@@ -13,7 +13,7 @@ SA-MP is a client modification and a server for Grand Theft Auto: San Andreas (2
 - Tab-specific username/game exe
 
 ## # Building
-Building this project should be relatively easy, as the only things you need are `ncurses`, `cJSON`, `libcurl`, and working `pkg-config`.
+Building this project should be relatively easy, as the only things you need are `ncurses`, `cJSON`, `libcurl`, `gmake` and working `pkg-config`.
 
 Here's an example of how to install dependencies on Fedora Linux.
 ```
@@ -27,13 +27,20 @@ $ git clone https://github.com/anny-moose/sampservb
 
 ```
 $ cd sampservb
-$ mkdir build
-$ make
+$ gmake
 ```
 
 After building, you can run it by executing `build/out`
 
-##  # Usage
+The default build target is `DEBUG`, which builds the code with ASan, UBSan and disables optimizations. 
+You may build the release target by invoking
+```
+$ TARGET=RELEASE gmake
+```
+
+Which will build the project in the `release` folder.
+
+## # Usage
 After starting the launcher you will be greeted with an empty serverlist, which you can populate by either running `:masterlist` or `:fetch`
 
 The default controls are described in the following table

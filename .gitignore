@@ -1,5 +1,6 @@
 .cache
 build/*
+release/*
 compile_commands.json
 
 .samprc

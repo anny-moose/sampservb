@@ -1,3 +1,5 @@
+#include "common.h"
+
 #include <curses.h>
 #include <signal.h>
 #include <stdarg.h>
