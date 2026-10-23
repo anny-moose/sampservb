@@ -11,6 +11,12 @@ else
 $(error Unrecognised build target $(TARGET))
 endif
 
+WERROR ?= FALSE
+
+ifeq ($(WERROR),TRUE)
+	CFLAGS += -Werror
+endif
+
 CFLAGS += -std=c99 -Wall -Wshadow -pedantic -Wextra $(shell pkg-config --cflags libcurl ncursesw libcjson)
 
 LDLIBS := $(shell pkg-config --libs libcurl ncursesw libcjson)

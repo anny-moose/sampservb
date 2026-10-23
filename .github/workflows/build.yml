@@ -1,0 +1,47 @@
+name: C CI
+
+permissions:
+  actions: read
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - run: |
+        sudo apt-get update
+        sudo apt-get -y --no-install-recommends install \
+          libncurses-dev libcurl4-openssl-dev libcjson-dev build-essential pkg-config
+    
+    - name: Build debug
+      run: |
+        WERROR=TRUE make
+        mv build/out sampservb-debug
+
+    - name: Build release
+      run: |
+        WERROR=TRUE TARGET=RELEASE make
+        mv release/out sampservb-release
+
+    - name: upload debug build
+      uses: actions/upload-artifact@v7.0.2
+      with:
+        path: sampserv-debug
+        archive: false
+        if-no-files-found: error
+        overwrite: true
+        
+    - name: upload release build
+      uses: actions/upload-artifact@v7.0.2
+      with:
+        path: sampserv-release
+        archive: false
+        if-no-files-found: error
+        overwrite: true
