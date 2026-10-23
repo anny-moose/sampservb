@@ -590,11 +590,10 @@ static sidefx master_act(union servquery_out* pack,
     struct masterstate* state = self->state;
 
     struct rc_tab* ref_tab = state->userdata;
+    struct tab_state* tab = &ref_tab->tab;
     if (ref_tab->markfree == true) {
         goto end;
     }
-
-    struct tab_state* tab = &ref_tab->tab;
 
     pack->info.txt = NULL;
     int err = servlist_add(&tab->list, &pack->info);
@@ -618,7 +617,9 @@ end:
     state->refs--;
     if (state->refs == 0) {
         free(state);
-        sort_serverlist(tab->list, tab->sort, tab->filters, tab->search_buf);
+        if (ref_tab->markfree != true)
+            sort_serverlist(tab->list, tab->sort, tab->filters,
+                            tab->search_buf);
     }
     tab_post(ref_tab);
     return ret;
@@ -630,11 +631,10 @@ static sidefx master_tact(struct expected_packet* self,
     struct masterstate* state = self->state;
 
     struct rc_tab* ref_tab = state->userdata;
+    struct tab_state* tab = &ref_tab->tab;
     if (ref_tab->markfree == true) {
         goto end;
     }
-
-    struct tab_state* tab = &ref_tab->tab;
 
     int err = masterlist_sendnextpacket(state, list);
     if (err == 0) {
@@ -649,7 +649,9 @@ end:
     state->refs--;
     if (state->refs == 0) {
         free(state);
-        sort_serverlist(tab->list, tab->sort, tab->filters, tab->search_buf);
+        if (ref_tab->markfree != true)
+            sort_serverlist(tab->list, tab->sort, tab->filters,
+                            tab->search_buf);
     }
     tab_post(ref_tab);
     return ret;
