@@ -7,7 +7,7 @@
 
 #include "cmd.h"
 
-const static struct keycodemap {
+static const struct keycodemap {
     const char* name;
     int key;
 } keys[] = {
@@ -22,7 +22,7 @@ int keymap_strtokey(const char* str) {
     if (*str == '\0') return ERR;
 
     if (str[1] == '\0') {
-        if (*str < 32 || *str > 127 || *str == ':' || *str == '/') return ERR;
+        if (*str <= 32 || *str >= 127 || *str == ':' || *str == '/') return ERR;
 
         return *str;
     }

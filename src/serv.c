@@ -10,7 +10,7 @@
 #include "states.h"
 
 int servlist_hide(struct servlist* servers, size_t idx) {
-    if (servers == NULL || idx < 0) return -1;
+    if (servers == NULL) return -1;
     if (idx >= servers->num_displayed) return 0;
 
     struct servinfo tmp = servers->servs[servers->num_displayed - 1];
@@ -30,7 +30,7 @@ static int servcmp(const void* s1_, const void* s2_) {
     const char* s1_txt = s1->txt != NULL ? s1->txt : sorted_list->txt;
     const char* s2_txt = s2->txt != NULL ? s2->txt : sorted_list->txt;
 
-    int ret;
+    int ret = 0;
     if (cmp_field & FIELD_PR) {
         if (s1->pa == s2->pa)
             ret = 0;

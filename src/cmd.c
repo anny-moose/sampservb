@@ -403,17 +403,17 @@ static void set_sort(void* target, const char* setting, const void* params) {
     *sort = new_sort;
 }
 
-const static struct set_bounds uname = {
+static const struct set_bounds uname = {
     .lower.usize = 3,
     .upper.usize = 24,
 };
 
-const static struct set_bounds tabname = {
+static const struct set_bounds tabname = {
     .lower.usize = 0,
     .upper.usize = TABNAME_LEN - 1,
 };
 
-const static struct set_num_params setu8_params = {
+static const struct set_num_params setu8_params = {
     .bounds =
         {
             .lower.ilong = 0,
@@ -422,7 +422,7 @@ const static struct set_num_params setu8_params = {
     .num_type = SET_NUM_U8,
 };
 
-const static struct setmap maps[] = {
+static const struct setmap maps[] = {
     {
         .name = "exec_cmd",
         .offset = offsetof(struct tab_state, exec_cmd),
@@ -1591,7 +1591,7 @@ sidefx handle_cmd(char* cmd, struct app_state* cfg) {
 
 /* this is far from the best solution and should potentially be changed. */
 
-const static struct {
+static const struct {
     int key;
     char* cmd;
     char* args;
