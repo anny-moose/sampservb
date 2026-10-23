@@ -67,7 +67,7 @@ void writestr_serv(WINDOW* win, const void* data, unsigned char col,
 
     const char* txt = entry->txt == NULL ? list->txt : entry->txt;
 
-    char buf[10];
+    char buf[12];
 
     switch (col) {
         case 0:
