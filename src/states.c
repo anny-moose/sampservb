@@ -1,6 +1,5 @@
 #include "states.h"
 
-#include <asm-generic/errno-base.h>
 #include <curses.h>
 #include <errno.h>
 #include <inttypes.h>
