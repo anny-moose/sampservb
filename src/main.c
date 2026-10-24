@@ -118,7 +118,7 @@ unsigned char upd_listdesc(struct tab_state* tab, struct listdesc* ldesc) {
 void sigchld_handler(int sig) {
     if (sig != SIGCHLD) return;
 
-    while (waitpid(-1, NULL, 0) < 0) {
+    while (waitpid(-1, NULL, WNOHANG) < 0) {
         if (errno != EINTR) return;
     }
 
