@@ -332,7 +332,7 @@ int servquery_init(void) {
 }
 
 int servquery_getfd(void) {
-    if (sockfd < 0) return -EBADFD;
+    if (sockfd < 0) return -EBADF;
 
     return sockfd;
 }
@@ -381,9 +381,9 @@ static int resp_inspect(struct sockaddr_in* out_from,
         < 0)
         return -errno;
     if ((size_t)ret < exp)
-        return -EBADE;
+        return -EBADMSG;
     else if (sender.sin_family != AF_INET) {
-        return -EBADE;
+        return -EBADMSG;
     }
 
     memcpy(out_from, &sender, sizeof(struct sockaddr_in));
@@ -392,9 +392,9 @@ static int resp_inspect(struct sockaddr_in* out_from,
 
     unsigned char req[QUERY_LEN];
     int err = servquery_constructreq(sender, op, req);
-    if (err < 0) return -EBADE;
+    if (err < 0) return -EBADMSG;
 
-    if (memcmp(req, resp, exp) != 0) return -EBADE;
+    if (memcmp(req, resp, exp) != 0) return -EBADMSG;
 
     return op;
 }
@@ -417,11 +417,12 @@ static ssize_t test_consume(const struct sockaddr_in* exp_sender,
     if (out_sender != NULL) *out_sender = sender;
 
     if (op != (int)exp_opcode && exp_opcode != SERVQUERY_OPCODE_UNKNOWN)
-        return -EBADE;
+        return -EBADMSG;
 
     if (exp_sender != NULL
-        && memcmp(exp_sender, &sender, sizeof(struct sockaddr_in)) != 0)
-        return -EBADE;
+        && ((memcmp(&sender.sin_addr, &exp_sender->sin_addr, sizeof(struct in_addr)) != 0)
+            || memcmp(&sender.sin_port, &exp_sender->sin_port, sizeof(in_port_t)) != 0))
+        return -EBADMSG;
 
     ssize_t ret;
     if ((ret = recvfrom(sockfd, resp, DGRAM_MAX, 0, NULL, 0)) < 0)
@@ -438,7 +439,7 @@ int servquery_discardresp(void) {
 }
 
 int servquery_sendreq(const struct sockaddr_in serv, char opcode) {
-    if (sockfd < 0) return -EBADFD;
+    if (sockfd < 0) return -EBADF;
 
     unsigned char req[QUERY_LEN];
     int ret = servquery_constructreq(serv, opcode, req);
@@ -509,7 +510,7 @@ int servquery_getresp(union servquery_out* out, const struct sockaddr_in* from,
             abort(); /* should be unreachable atp */
     }
 
-    if ((size_t)ret < exp) return -EBADE;
+    if ((size_t)ret < exp) return -EBADMSG;
 
     union servquery_out lout = *out;
     switch (op) {
@@ -597,7 +598,7 @@ static int parse_info(const unsigned char resp[DGRAM_MAX], const size_t rlen,
         if (lengths[i] > SIZE_MAX - rexp) return -EOVERFLOW;
 
         rexp += lengths[i];
-        if (rlen < rexp) return -EBADE;
+        if (rlen < rexp) return -EBADMSG;
 
         offsets[i] = buf_occupied;
         buf_occupied += lengths[i] + 1;
@@ -647,7 +648,7 @@ static int parse_rules(const unsigned char resp[DGRAM_MAX], const size_t rlen,
     if ((SIZE_MAX - rexp) / 2 < (size_t)rc) return -EOVERFLOW;
     rexp += rc * 2;
 
-    if (rlen < rexp) return -EBADE;
+    if (rlen < rexp) return -EBADMSG;
 
     /* unlike the info function, you can't keep track of the offsets without
      * extra allocations/VLAs, so we just have to go over the list twice. */
@@ -660,14 +661,14 @@ static int parse_rules(const unsigned char resp[DGRAM_MAX], const size_t rlen,
         memcpy(&len, tmp_cursor, 1);
         if (SIZE_MAX - rexp < (size_t)len) return -EOVERFLOW;
         rexp += len;
-        if (rlen < rexp) return -EBADE;
+        if (rlen < rexp) return -EBADMSG;
         buf_size += (size_t)len + 1;
         tmp_cursor += len + 1;
 
         memcpy(&len, tmp_cursor, 1);
         if (SIZE_MAX - rexp < (size_t)len) return -EOVERFLOW;
         rexp += len;
-        if (rlen < rexp) return -EBADE;
+        if (rlen < rexp) return -EBADMSG;
         buf_size += (size_t)len + 1;
         tmp_cursor += len + 1;
     }
@@ -728,7 +729,7 @@ static int parse_clients(const unsigned char resp[DGRAM_MAX], const size_t rlen,
     if ((SIZE_MAX - rexp) / 5 < (size_t)cc) return -EOVERFLOW;
     rexp += cc * 5;
 
-    if (rlen < rexp) return -EBADE;
+    if (rlen < rexp) return -EBADMSG;
 
     const unsigned char* tmp_cursor = cursor;
     size_t buf_size = 0;
@@ -738,7 +739,7 @@ static int parse_clients(const unsigned char resp[DGRAM_MAX], const size_t rlen,
         memcpy(&len, tmp_cursor, 1);
         if (SIZE_MAX - rexp < (size_t)len) return -EOVERFLOW;
         rexp += len;
-        if (rlen < rexp) return -EBADE;
+        if (rlen < rexp) return -EBADMSG;
         buf_size += (size_t)len + 1;
         tmp_cursor += len + 1;
 

@@ -174,8 +174,10 @@ int packet_list_popmatch(struct packet_list* list, struct sockaddr_in from,
                          struct expected_packet* out) {
     if (list == NULL || out == NULL) return -EINVAL;
     for (size_t i = 0; i < list->len; i++) {
-        if (memcmp(&from, &list->packets[i].from, sizeof(from)) != 0
-            || memcmp(&op, &list->packets[i].op, sizeof(op)) != 0)
+        const struct sockaddr_in* pack_from = &list->packets[i].from;
+        if ((memcmp(&pack_from->sin_addr, &from.sin_addr, sizeof(struct in_addr)) != 0)
+            || (memcmp(&pack_from->sin_port, &from.sin_port, sizeof(in_port_t)) != 0)
+            || op != list->packets[i].op)
             continue;
 
         struct vector vec = plist_vec(list);

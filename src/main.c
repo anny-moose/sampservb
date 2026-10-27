@@ -326,7 +326,7 @@ sidefx handle_socket(struct app_state* state) {
 
     int ret = servquery_inspectresp(&origin);
     if (ret < 0) {
-        if (ret == -EBADE) servquery_discardresp();
+        if (ret == -EBADMSG) servquery_discardresp();
         notify("Error while handling socket: %s", strerror(-ret));
         return 0;
     }
